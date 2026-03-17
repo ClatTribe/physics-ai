@@ -1,0 +1,77 @@
+@import "tailwindcss";
+
+:root {
+  --bg: #0f1117;
+  --surface: #1a1d27;
+  --surface2: #232735;
+  --border: #2d3148;
+  --accent: #6c63ff;
+  --accent-glow: rgba(108,99,255,0.3);
+  --green: #00e676;
+  --green-glow: rgba(0,230,118,0.15);
+  --text: #e8eaed;
+  --text-dim: #9aa0b4;
+  --orange: #ff9100;
+  --red: #ff5252;
+  --whiteboard: #0d1f0d;
+  --chalk: #b8ffb8;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  overflow: hidden;
+  height: 100vh;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
+
+/* KaTeX override */
+.katex { font-size: 1.2em !important; }
+.katex-display { margin: 0.5em 0 !important; }
+
+/* Avatar speaking glow */
+.avatar-ring {
+  transition: all 0.3s ease;
+  box-shadow: 0 0 0 3px var(--accent), 0 0 30px var(--accent-glow);
+}
+.avatar-ring.speaking {
+  box-shadow: 0 0 0 3px var(--green), 0 0 40px var(--green-glow), 0 0 80px rgba(0,230,118,0.08);
+}
+
+/* Math blocks */
+.math-block {
+  padding: 10px 14px;
+  background: rgba(0,0,0,0.25);
+  border-left: 3px solid var(--accent);
+  border-radius: 0 8px 8px 0;
+  margin: 8px 0;
+  overflow-x: auto;
+}
+.math-block .katex { color: #fff !important; }
+
+.math-highlight {
+  background: rgba(108,99,255,0.12);
+  border: 1px solid rgba(108,99,255,0.25);
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin: 8px 0;
+}
+
+/* Live dot */
+@keyframes livePulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+/* Sound wave */
+@keyframes wave {
+  0%, 100% { transform: scaleY(0.4); }
+  50% { transform: scaleY(1); }
+}
