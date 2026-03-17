@@ -7,6 +7,8 @@ import DoubtChat from '@/components/DoubtChat'
 import { topics, type Topic } from '@/data/topics'
 import { initTTS, setCallbacks, speak, stopSpeaking, getTTSMode } from '@/lib/tts'
 
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
+
 export default function Home() {
   const [selectedTopic, setSelectedTopic] = useState<Topic | null>(null)
   const [isPlaying, setIsPlaying] = useState(false)
@@ -15,7 +17,6 @@ export default function Home() {
   const [speed, setSpeed] = useState(1)
   const [studentCount, setStudentCount] = useState(847)
   const [ttsMode, setTtsMode] = useState<string>('detecting')
-  const timeoutsRef = useRef<NodeJS.Timeout[]>([])
 
   // Init TTS
   useEffect(() => {
@@ -37,44 +38,47 @@ export default function Home() {
     return () => clearInterval(interval)
   }, [])
 
-  const clearTimeouts = () => {
-    timeoutsRef.current.forEach(t => clearTimeout(t))
-    timeoutsRef.current = []
-  }
+  // Abort controller for stopping a running lesson
+  const abortRef = useRef(false)
 
-  const startLesson = useCallback(() => {
+  const startLesson = useCallback(async () => {
     if (!selectedTopic) return
+    abortRef.current = false
     setIsPlaying(true)
     setCurrentStep(-1)
-    clearTimeouts()
 
-    let delay = 200
+    // Small delay before first step
+    await sleep(300)
 
-    selectedTopic.steps.forEach((step, idx) => {
-      const t = setTimeout(() => {
-        setCurrentStep(idx)
-        if (step.speech) {
-          speak(step.speech, speed)
-        }
-      }, delay)
-      timeoutsRef.current.push(t)
+    // Play each step sequentially — wait for speech to finish before next step
+    for (let idx = 0; idx < selectedTopic.steps.length; idx++) {
+      if (abortRef.current) break
 
-      // Estimate speech duration (chars * ~55ms adjusted by speed)
-      const speechDuration = step.speech ? (step.speech.length * 55) / speed : 3000
-      delay += Math.max(speechDuration, 2000 / speed)
-    })
+      // 1. Show the step on whiteboard
+      setCurrentStep(idx)
 
-    // Auto-stop after last step
-    const endT = setTimeout(() => {
+      // 2. Speak and WAIT for it to finish
+      const step = selectedTopic.steps[idx]
+      if (step.speech && !abortRef.current) {
+        await speak(step.speech, speed)
+      }
+
+      if (abortRef.current) break
+
+      // 3. Small pause between steps (feels natural)
+      await sleep(400)
+    }
+
+    // Lesson complete
+    if (!abortRef.current) {
       setIsPlaying(false)
-    }, delay + 1000)
-    timeoutsRef.current.push(endT)
+    }
   }, [selectedTopic, speed])
 
   const stopLesson = () => {
+    abortRef.current = true
     setIsPlaying(false)
     setCurrentStep(-1)
-    clearTimeouts()
     stopSpeaking()
   }
 
