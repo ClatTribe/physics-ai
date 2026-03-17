@@ -29,49 +29,92 @@ export async function POST(request: NextRequest) {
     const { question, topicContext, previousSteps } = await request.json()
 
     const apiKey = process.env.GEMINI_API_KEY
-    if (!apiKey) {
+    if (!apiKey || apiKey === 'your_gemini_api_key_here') {
       return NextResponse.json(
         { error: 'GEMINI_API_KEY not configured', fallback: true },
-        { status: 200 } // 200 so frontend can show fallback gracefully
+        { status: 200 }
       )
     }
 
     const genAI = new GoogleGenerativeAI(apiKey)
-    const model = genAI.getGenerativeModel({
-      model: 'gemini-2.0-flash',
-    })
 
-    const contextMessage = topicContext
-      ? `\n\nCurrent topic being taught: ${topicContext}\nSteps covered so far:\n${previousSteps || 'None yet'}`
-      : ''
+    // Try models in order of preference
+    const modelsToTry = [
+      'gemini-3.0-flash',
+      'gemini-2.0-flash',
+      'gemini-1.5-flash',
+      'gemini-pro',
+    ]
 
-    const result = await model.generateContent({
-      contents: [
-        {
-          role: 'user',
-          parts: [
+    let lastError: Error | null = null
+
+    for (const modelName of modelsToTry) {
+      try {
+        const model = genAI.getGenerativeModel({ model: modelName })
+
+        const contextMessage = topicContext
+          ? `\n\nCurrent topic being taught: ${topicContext}\nSteps covered so far:\n${previousSteps || 'None yet'}`
+          : ''
+
+        const result = await model.generateContent({
+          contents: [
             {
-              text: `${SYSTEM_PROMPT}${contextMessage}\n\nStudent's doubt: "${question}"\n\nRespond as Prof. Arjun Sharma in Hinglish. Keep it concise and helpful.`,
+              role: 'user',
+              parts: [
+                {
+                  text: `${SYSTEM_PROMPT}${contextMessage}\n\nStudent's doubt: "${question}"\n\nRespond as Prof. Arjun Sharma in Hinglish. Keep it concise and helpful.`,
+                },
+              ],
             },
           ],
-        },
-      ],
-      generationConfig: {
-        maxOutputTokens: 300,
-        temperature: 0.7,
+          generationConfig: {
+            maxOutputTokens: 300,
+            temperature: 0.7,
+          },
+        })
+
+        const response = result.response
+        const text = response.text()
+
+        if (!text || text.trim().length === 0) {
+          throw new Error('Empty response from model')
+        }
+
+        return NextResponse.json({ response: text, model: modelName })
+      } catch (modelError) {
+        lastError = modelError instanceof Error ? modelError : new Error(String(modelError))
+        console.error(`[Gemini] Model ${modelName} failed:`, lastError.message)
+        continue // Try next model
+      }
+    }
+
+    // All models failed — return the actual error so user can debug
+    return NextResponse.json(
+      {
+        error: lastError?.message || 'All models failed',
+        fallback: true,
+        debug: `Tried models: ${modelsToTry.join(', ')}. Last error: ${lastError?.message}`,
       },
-    })
-
-    const response = result.response
-    const text = response.text()
-
-    return NextResponse.json({ response: text })
+      { status: 200 }
+    )
   } catch (error: unknown) {
-    console.error('Gemini API error:', error)
+    console.error('[Gemini] Request error:', error)
     const message = error instanceof Error ? error.message : 'Unknown error'
     return NextResponse.json(
       { error: message, fallback: true },
       { status: 200 }
     )
   }
+}
+
+// Health check — GET /api/chat tells you if the key is configured
+export async function GET() {
+  const apiKey = process.env.GEMINI_API_KEY
+  const configured = !!(apiKey && apiKey !== 'your_gemini_api_key_here')
+
+  return NextResponse.json({
+    status: configured ? 'ready' : 'missing_key',
+    keyPresent: configured,
+    keyPrefix: configured ? apiKey!.substring(0, 6) + '...' : null,
+  })
 }

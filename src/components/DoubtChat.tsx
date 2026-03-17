@@ -52,16 +52,30 @@ export default function DoubtChat({ currentTopic, topicTitle, coveredSteps, onTe
         }),
       })
 
-      const data = await res.json()
-
-      if (data.fallback || data.error) {
+      if (!res.ok) {
+        console.error('[DoubtChat] API returned status:', res.status)
         setGeminiAvailable(false)
         return getFallbackResponse()
       }
 
-      setGeminiAvailable(true)
-      return data.response
-    } catch {
+      const data = await res.json()
+      console.log('[DoubtChat] API response:', data)
+
+      if (data.fallback) {
+        console.warn('[DoubtChat] Fallback triggered:', data.error, data.debug)
+        setGeminiAvailable(false)
+        return getFallbackResponse()
+      }
+
+      if (data.response) {
+        setGeminiAvailable(true)
+        return data.response
+      }
+
+      setGeminiAvailable(false)
+      return getFallbackResponse()
+    } catch (err) {
+      console.error('[DoubtChat] Fetch error:', err)
       setGeminiAvailable(false)
       return getFallbackResponse()
     }
