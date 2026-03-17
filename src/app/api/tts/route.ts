@@ -163,15 +163,56 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// Health check
+// Health check — actually tests the TTS API with a real call
 export async function GET() {
   const apiKey = process.env.GEMINI_API_KEY
   const configured = !!(apiKey && apiKey !== 'your_gemini_api_key_here')
 
-  return NextResponse.json({
-    status: configured ? 'ready' : 'missing_key',
-    note: configured
-      ? 'Ensure Cloud Text-to-Speech API is enabled at console.cloud.google.com'
-      : 'Set GEMINI_API_KEY in environment variables',
-  })
+  if (!configured) {
+    return NextResponse.json({
+      status: 'missing_key',
+      note: 'Set GEMINI_API_KEY in environment variables',
+    })
+  }
+
+  // Actually test the TTS API
+  try {
+    const testBody = {
+      input: { text: 'Hello' },
+      voice: { languageCode: 'en-IN', name: 'en-IN-Neural2-B', ssmlGender: 'MALE' },
+      audioConfig: { audioEncoding: 'MP3' },
+    }
+
+    const res = await fetch(`${GOOGLE_TTS_ENDPOINT}?key=${apiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(testBody),
+    })
+
+    if (!res.ok) {
+      const errorData = await res.json().catch(() => ({}))
+      return NextResponse.json({
+        status: 'error',
+        httpStatus: res.status,
+        error: errorData,
+        fix: res.status === 403
+          ? 'Enable "Cloud Text-to-Speech API" at https://console.cloud.google.com/apis/library/texttospeech.googleapis.com'
+          : res.status === 400
+          ? 'API key may not have permission for Cloud TTS. Try enabling the API.'
+          : `Unexpected error ${res.status}`,
+      })
+    }
+
+    const data = await res.json()
+    return NextResponse.json({
+      status: 'working',
+      audioGenerated: !!data.audioContent,
+      audioSizeBytes: data.audioContent ? Math.round(data.audioContent.length * 0.75) : 0,
+    })
+  } catch (error) {
+    return NextResponse.json({
+      status: 'error',
+      error: error instanceof Error ? error.message : 'Network error',
+    })
+  }
 }

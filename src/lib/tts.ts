@@ -63,23 +63,17 @@ export function initTTS() {
 
 async function detectAPIMode() {
   try {
+    // The GET endpoint now actually tests the TTS API
     const res = await fetch('/api/tts')
     const data = await res.json()
-    if (data.status === 'ready') {
-      // Do a quick test call with short text
-      const testRes = await fetch('/api/tts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: 'test', speed: 1 }),
-      })
-      if (testRes.ok && testRes.headers.get('content-type')?.includes('audio')) {
-        mode = 'api'
-        console.log('[TTS] Using Google Cloud Neural2 voices')
-      } else {
-        const err = await testRes.json().catch(() => ({}))
-        console.warn('[TTS] API test failed, using browser fallback:', err)
-        mode = 'browser'
-      }
+    console.log('[TTS] Health check response:', data)
+
+    if (data.status === 'working') {
+      mode = 'api'
+      console.log('[TTS] ✅ Google Cloud Neural2 voices active')
+    } else if (data.status === 'error') {
+      console.warn('[TTS] ❌ API error:', data.error, data.fix || '')
+      mode = 'browser'
     } else {
       mode = 'browser'
       console.log('[TTS] No API key, using browser voices')
