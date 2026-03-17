@@ -5,7 +5,7 @@ import Avatar from '@/components/Avatar'
 import Whiteboard from '@/components/Whiteboard'
 import DoubtChat from '@/components/DoubtChat'
 import { topics, type Topic } from '@/data/topics'
-import { initTTS, setCallbacks, speak, stopSpeaking } from '@/lib/tts'
+import { initTTS, setCallbacks, speak, stopSpeaking, getTTSMode } from '@/lib/tts'
 
 export default function Home() {
   const [selectedTopic, setSelectedTopic] = useState<Topic | null>(null)
@@ -14,6 +14,7 @@ export default function Home() {
   const [isSpeaking, setIsSpeaking] = useState(false)
   const [speed, setSpeed] = useState(1)
   const [studentCount, setStudentCount] = useState(847)
+  const [ttsMode, setTtsMode] = useState<string>('detecting')
   const timeoutsRef = useRef<NodeJS.Timeout[]>([])
 
   // Init TTS
@@ -22,7 +23,10 @@ export default function Home() {
     setCallbacks(
       () => setIsSpeaking(true),
       () => setIsSpeaking(false),
+      (m) => setTtsMode(m),
     )
+    // Check after detection
+    setTimeout(() => setTtsMode(getTTSMode()), 3000)
   }, [])
 
   // Fake student count
@@ -116,6 +120,17 @@ export default function Home() {
               <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
             </svg>
             {studentCount} students online
+          </div>
+
+          {/* TTS Mode Badge */}
+          <div className={`text-[10px] font-semibold px-2 py-0.5 rounded ${
+            ttsMode === 'api'
+              ? 'bg-green-400/10 text-green-400'
+              : ttsMode === 'detecting'
+              ? 'bg-yellow-400/10 text-yellow-400'
+              : 'bg-[var(--surface2)] text-[var(--text-dim)]'
+          }`}>
+            {ttsMode === 'api' ? '🔊 Neural Voice' : ttsMode === 'detecting' ? '⏳ Detecting...' : '🔈 Browser Voice'}
           </div>
 
           {/* Speed Control */}
