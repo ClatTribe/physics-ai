@@ -294,6 +294,12 @@ export default function Home() {
           {/* Doubt Chat */}
           <DoubtChat
             currentTopic={selectedTopic?.id || ''}
+            topicTitle={selectedTopic ? `${selectedTopic.title} — ${selectedTopic.titleHi}` : ''}
+            coveredSteps={
+              selectedTopic && currentStep >= 0
+                ? selectedTopic.steps.slice(0, currentStep + 1).map(s => `${s.label}: ${s.text || s.math || ''}`)
+                : []
+            }
             onTeacherSpeak={handleDoubtSpeak}
           />
         </main>
