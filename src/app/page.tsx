@@ -280,7 +280,7 @@ export default function Home() {
 
           {/* Whiteboard or Welcome */}
           {selectedTopic && currentStep >= 0 ? (
-            <Whiteboard steps={selectedTopic.steps} currentStepIndex={currentStep} isPlaying={isPlaying} />
+            <Whiteboard steps={selectedTopic.steps} currentStepIndex={currentStep} isPlaying={isPlaying} diagram={selectedTopic.diagram} />
           ) : (
             <div className="flex-1 flex items-center justify-center">
               <div className="text-center px-10 max-w-md">

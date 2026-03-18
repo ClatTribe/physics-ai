@@ -7,6 +7,15 @@ export interface Step {
   speech: string
   highlight?: boolean
   isAnswer?: boolean
+  /** Which elements to reveal in the diagram at this step (cumulative) */
+  showElements?: string[]
+}
+
+export interface DiagramConfig {
+  type: 'atwood' | 'projectile' | 'pendulum' | 'lens' | 'circuit' | 'gauss'
+  /** Default parameter values for sliders */
+  params: Record<string, { label: string; min: number; max: number; step: number; value: number; unit: string }>
+  /** Function-like formula strings for recalculation — actual calc is in the component */
 }
 
 export interface Topic {
@@ -20,6 +29,8 @@ export interface Topic {
   difficulty: 'Easy' | 'Medium' | 'Hard'
   chapter: string
   steps: Step[]
+  /** Interactive diagram config — if present, shows animated canvas */
+  diagram?: DiagramConfig
 }
 
 export type Subject = 'All' | 'Physics' | 'Chemistry' | 'Mathematics'

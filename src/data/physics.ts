@@ -11,6 +11,14 @@ export const physicsQuestions: Topic[] = [
     subject: 'Physics',
     difficulty: 'Easy',
     chapter: 'Kinematics',
+    diagram: {
+      type: 'projectile',
+      params: {
+        u: { label: 'Initial velocity (u)', min: 5, max: 50, step: 1, value: 20, unit: ' m/s' },
+        theta: { label: 'Angle (θ)', min: 0, max: 60, step: 5, value: 0, unit: '°' },
+        H: { label: 'Building height (H)', min: 5, max: 80, step: 5, value: 45, unit: ' m' },
+      },
+    },
     steps: [
       {
         label: 'Problem Setup',
@@ -61,6 +69,13 @@ export const physicsQuestions: Topic[] = [
     subject: 'Physics',
     difficulty: 'Medium',
     chapter: 'Newton\'s Laws of Motion',
+    diagram: {
+      type: 'atwood',
+      params: {
+        m1: { label: 'Mass m₁ (heavier)', min: 1, max: 20, step: 0.5, value: 5, unit: ' kg' },
+        m2: { label: 'Mass m₂ (lighter)', min: 1, max: 20, step: 0.5, value: 3, unit: ' kg' },
+      },
+    },
     steps: [
       {
         label: 'Problem Setup',
@@ -304,6 +319,15 @@ export const physicsQuestions: Topic[] = [
     subject: 'Physics',
     difficulty: 'Medium',
     chapter: 'Ray Optics',
+    diagram: {
+      type: 'lens',
+      params: {
+        f1: { label: 'Convex f₁', min: 10, max: 50, step: 5, value: 20, unit: ' cm' },
+        f2: { label: 'Concave f₂', min: -80, max: -10, step: 5, value: -40, unit: ' cm' },
+        d: { label: 'Separation (d)', min: 5, max: 30, step: 1, value: 10, unit: ' cm' },
+        u1: { label: 'Object distance (u)', min: -60, max: -15, step: 5, value: -30, unit: ' cm' },
+      },
+    },
     steps: [
       {
         label: 'Problem Setup',
@@ -355,6 +379,14 @@ export const physicsQuestions: Topic[] = [
     subject: 'Physics',
     difficulty: 'Easy',
     chapter: 'Simple Harmonic Motion',
+    diagram: {
+      type: 'pendulum',
+      params: {
+        L: { label: 'Length (L)', min: 0.2, max: 3, step: 0.1, value: 1, unit: ' m' },
+        theta: { label: 'Angle (θ)', min: 1, max: 15, step: 1, value: 5, unit: '°' },
+        m: { label: 'Mass (m)', min: 0.05, max: 0.5, step: 0.05, value: 0.1, unit: ' kg' },
+      },
+    },
     steps: [
       {
         label: 'Problem Setup',
