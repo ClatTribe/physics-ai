@@ -4,7 +4,8 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import Avatar from '@/components/Avatar'
 import Whiteboard from '@/components/Whiteboard'
 import DoubtChat from '@/components/DoubtChat'
-import { topics, type Topic, type Subject, type Difficulty } from '@/data/topics'
+import ConceptHeatmap from '@/components/ConceptHeatmap'
+import { topics as builtInTopics, type Topic, type Subject, type Difficulty } from '@/data/topics'
 import { initTTS, setCallbacks, speak, stopSpeaking, getTTSMode } from '@/lib/tts'
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
@@ -35,10 +36,25 @@ export default function Home() {
   const [ttsMode, setTtsMode] = useState<string>('detecting')
   const [subject, setSubject] = useState<Subject>('All')
   const [difficulty, setDifficulty] = useState<Difficulty>('All')
+  const [doubtHistory, setDoubtHistory] = useState<string[]>([])
+  const [customTopics, setCustomTopics] = useState<Topic[]>([])
+
+  // Load custom questions from localStorage
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem('jeetribe_custom_questions')
+        if (saved) setCustomTopics(JSON.parse(saved))
+      } catch { /* ignore */ }
+    }
+  }, [])
+
+  // Combine built-in + custom topics
+  const allTopics = useMemo(() => [...builtInTopics, ...customTopics], [customTopics])
 
   // Filtered topics
   const filteredTopics = useMemo(() => {
-    return topics.filter(t => {
+    return allTopics.filter(t => {
       if (subject !== 'All' && t.subject !== subject) return false
       if (difficulty !== 'All' && t.difficulty !== difficulty) return false
       return true
@@ -119,6 +135,9 @@ export default function Home() {
           <div className="font-bold text-lg">
             JEETribe<span className="text-orange-400"> AI</span>
           </div>
+          <a href="/admin" className="text-[10px] font-semibold px-2 py-0.5 rounded bg-[var(--surface2)] text-[var(--text-dim)] hover:text-white transition-colors">
+            ⚙️ Admin
+          </a>
           {isPlaying && (
             <div className="flex items-center gap-1.5 bg-red-500/15 text-red-400 px-3 py-1 rounded-full text-xs font-semibold">
               <div className="w-2 h-2 bg-red-400 rounded-full" style={{animation:'livePulse 1.5s infinite'}} />
@@ -167,6 +186,17 @@ export default function Home() {
           <div className="p-4 border-b border-[var(--border)]">
             <Avatar isSpeaking={isSpeaking} />
           </div>
+
+          {/* Concept Mastery Heatmap — shows when a topic is selected */}
+          {selectedTopic && (
+            <div className="px-3 pt-3 pb-1 border-b border-[var(--border)]">
+              <ConceptHeatmap
+                topicId={selectedTopic.id}
+                currentStep={currentStep}
+                doubtHistory={doubtHistory}
+              />
+            </div>
+          )}
 
           {/* Subject Tabs */}
           <div className="px-3 pt-3 pb-1">
@@ -322,6 +352,7 @@ export default function Home() {
                 : []
             }
             onTeacherSpeak={handleDoubtSpeak}
+            onDoubtAsked={(q) => setDoubtHistory(prev => [...prev, q])}
           />
         </main>
       </div>

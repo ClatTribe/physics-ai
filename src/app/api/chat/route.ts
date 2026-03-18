@@ -26,7 +26,7 @@ RESPONSE FORMAT:
 
 export async function POST(request: NextRequest) {
   try {
-    const { question, topicContext, previousSteps } = await request.json()
+    const { question, topicContext, previousSteps, repeatCount, previousAttempts } = await request.json()
 
     const apiKey = process.env.GEMINI_API_KEY
     if (!apiKey || apiKey === 'your_gemini_api_key_here') {
@@ -56,13 +56,25 @@ export async function POST(request: NextRequest) {
           ? `\n\nCurrent topic being taught: ${topicContext}\nSteps covered so far:\n${previousSteps || 'None yet'}`
           : ''
 
+        // Emotional Intelligence: detect repeated doubts and change approach
+        let emotionalContext = ''
+        if (repeatCount && repeatCount >= 3) {
+          emotionalContext = `\n\n⚠️ IMPORTANT: The student has asked about the SAME concept ${repeatCount} times. They clearly haven't understood your previous explanations. You MUST:
+1. Acknowledge their frustration warmly: "Dekho, koi baat nahi — is concept ko samajhne mein time lagta hai"
+2. Use a COMPLETELY DIFFERENT approach: use a real-life analogy, a visual example, or break it into even simpler baby steps
+3. Do NOT repeat your previous explanation. Here are your previous attempts that DIDN'T work:\n${previousAttempts || 'N/A'}
+4. Try: analogy from cricket/daily life, numerical example with very simple numbers, or step-by-step with "imagine you are..." framing`
+        } else if (repeatCount && repeatCount === 2) {
+          emotionalContext = `\n\nNote: Student asked a similar question before. Rephrase your explanation using a different angle or example. Say "Achha, main ek aur tarike se samjhata hoon..." Previous explanation:\n${previousAttempts || 'N/A'}`
+        }
+
         const result = await model.generateContent({
           contents: [
             {
               role: 'user',
               parts: [
                 {
-                  text: `${SYSTEM_PROMPT}${contextMessage}\n\nStudent's doubt: "${question}"\n\nRespond as Prof. Arjun Sharma in Hinglish. Keep it concise and helpful.`,
+                  text: `${SYSTEM_PROMPT}${contextMessage}${emotionalContext}\n\nStudent's doubt: "${question}"\n\nRespond as Prof. Arjun Sharma in Hinglish. Keep it concise and helpful.`,
                 },
               ],
             },
