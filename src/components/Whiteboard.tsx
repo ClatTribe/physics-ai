@@ -49,6 +49,27 @@ function StepCard({ step, visible }: { step: Step; visible: boolean }) {
     )
   }
 
+  // Re-explanation step (injected during doubt) — make it VERY prominent
+  const isReExplanation = step.label?.includes('Re-explanation')
+
+  if (isReExplanation) {
+    return (
+      <div className={`mb-5 p-5 rounded-xl border-2 transition-all duration-500
+        ${visible ? 'opacity-100 scale-100' : 'opacity-0 scale-95'}
+        bg-[rgba(255,145,0,0.08)] border-orange-500/40`}
+      >
+        <div className="flex items-center gap-2 mb-3">
+          <span className="text-lg">🧠</span>
+          <div className="text-sm font-bold text-orange-400">Prof. Sharma is re-explaining this step...</div>
+        </div>
+        <div className="text-sm text-[var(--chalk)] leading-relaxed whitespace-pre-line">{step.text}</div>
+        <div className="mt-3 pt-3 border-t border-orange-500/20 text-xs text-orange-400/70">
+          ↑ Samajh aaya? "Continue" press karo ya aur doubt poocho
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className={`mb-5 transition-all duration-500 ${visible ? 'opacity-100 translate-x-0' : 'opacity-0 -translate-x-4'}`}>
       {step.label && (

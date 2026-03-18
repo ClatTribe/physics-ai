@@ -9,7 +9,6 @@ PERSONALITY & STYLE:
 - Use English for technical terms, formulas, and physics concepts
 - Be warm, encouraging, and patient — like a favorite teacher
 - Use phrases like "Ye bahut important hai JEE ke liye!", "NEET mein ye baar baar aata hai!"
-- Keep answers concise (3-5 sentences) unless a detailed explanation is needed
 
 TEACHING RULES:
 - Always relate answers back to JEE/NEET exam patterns
@@ -17,16 +16,15 @@ TEACHING RULES:
 - When giving formulas, also give the "trick" to remember them
 - Correct misconceptions gently: "Bahut students ye galti karte hain, but actually..."
 - End important explanations with a quick recap
-
-RESPONSE FORMAT:
-- Keep responses SHORT for doubts (50-100 words typically)
-- Use simple language — you're teaching 16-18 year olds
-- If someone asks something off-topic, gently bring them back to physics
 - Never use markdown formatting, bullet points, or headers — speak naturally as a teacher would in class`
 
 export async function POST(request: NextRequest) {
   try {
-    const { question, topicContext, previousSteps, repeatCount, previousAttempts, duringLesson, currentStepLabel } = await request.json()
+    const {
+      question, topicContext, previousSteps,
+      repeatCount, previousAttempts,
+      duringLesson, currentStepLabel, currentStepContent,
+    } = await request.json()
 
     const apiKey = process.env.GEMINI_API_KEY
     if (!apiKey || apiKey === 'your_gemini_api_key_here') {
@@ -38,7 +36,6 @@ export async function POST(request: NextRequest) {
 
     const genAI = new GoogleGenerativeAI(apiKey)
 
-    // Try models in order of preference (verified model IDs as of March 2026)
     const modelsToTry = [
       'gemini-2.5-flash',
       'gemini-2.0-flash',
@@ -56,86 +53,84 @@ export async function POST(request: NextRequest) {
           ? `\n\nCurrent topic being taught: ${topicContext}\nSteps covered so far:\n${previousSteps || 'None yet'}`
           : ''
 
-        // Emotional Intelligence: detect repeated doubts and change approach
+        // Emotional Intelligence
         let emotionalContext = ''
         if (repeatCount && repeatCount >= 3) {
-          emotionalContext = `\n\n⚠️ IMPORTANT: The student has asked about the SAME concept ${repeatCount} times. They clearly haven't understood your previous explanations. You MUST:
-1. Acknowledge their frustration warmly: "Dekho, koi baat nahi — is concept ko samajhne mein time lagta hai"
-2. Use a COMPLETELY DIFFERENT approach: use a real-life analogy, a visual example, or break it into even simpler baby steps
-3. Do NOT repeat your previous explanation. Here are your previous attempts that DIDN'T work:\n${previousAttempts || 'N/A'}
-4. Try: analogy from cricket/daily life, numerical example with very simple numbers, or step-by-step with "imagine you are..." framing`
+          emotionalContext = `\n\n⚠️ CRITICAL: Student asked about the SAME concept ${repeatCount} times. Previous explanations FAILED. You MUST:
+1. Say: "Dekho, koi baat nahi — ek aur tarike se samjhte hain"
+2. Use a COMPLETELY DIFFERENT method: real-life analogy (cricket, cooking, driving), or imagine-you-are framing
+3. Do NOT repeat anything from these failed attempts:\n${previousAttempts || 'N/A'}
+4. Start fresh with the simplest possible explanation`
         } else if (repeatCount && repeatCount === 2) {
-          emotionalContext = `\n\nNote: Student asked a similar question before. Rephrase your explanation using a different angle or example. Say "Achha, main ek aur tarike se samjhata hoon..." Previous explanation:\n${previousAttempts || 'N/A'}`
+          emotionalContext = `\n\nStudent asked similar before. Use a different angle. Say "Achha, ek aur example se samjhte hain..." Previous attempt:\n${previousAttempts || 'N/A'}`
         }
 
-        // Mid-lesson doubt: the lesson is PAUSED waiting for understanding
+        // ═══ MID-LESSON DOUBT — this is the key part ═══
         let lessonContext = ''
-        if (duringLesson && currentStepLabel) {
-          lessonContext = `\n\n🎯 CRITICAL CONTEXT: The student asked this doubt DURING a live lesson. The lesson is now PAUSED at step "${currentStepLabel}". You must:
-1. Go BACK to this specific step and re-explain it more clearly
-2. Use a simpler example or analogy specific to what confused them
-3. Break the step into even smaller sub-steps
-4. After explaining, encourage them: "Ab samajh aaya? Agar haan toh Continue press karo, nahi toh aur poocho!"
-5. Keep your response focused on THIS step only — don't jump ahead
-6. Response should be 80-150 words — detailed enough to clarify but not overwhelming`
+        let tokenLimit = 300
+        let temp = 0.7
+
+        if (duringLesson) {
+          tokenLimit = 600 // Much more room for a proper re-explanation
+          temp = 0.6 // Slightly more focused
+
+          lessonContext = `\n\n═══ LESSON IS PAUSED — STUDENT NEEDS RE-EXPLANATION ═══
+The lesson stopped because the student has a doubt. They are confused about this specific step:
+
+STEP TITLE: "${currentStepLabel || 'Unknown'}"
+STEP CONTENT: ${currentStepContent || 'Not available'}
+
+YOUR TASK — you MUST do ALL of these:
+1. DIRECTLY address what confused them — don't just say "accha doubt hai" and stop
+2. RE-EXPLAIN the concept in this step using DIFFERENT words and a SIMPLER example
+3. If there's a formula, explain WHY each part of the formula exists (physical meaning)
+4. Give a concrete numerical example with easy numbers (like 2, 5, 10) to build intuition
+5. Use an analogy from daily life if possible (bucket filling for rate, cricket ball for projectile, etc.)
+6. End with: "Ab samajh aaya? Continue press karo ya aur doubt poocho!"
+
+IMPORTANT: Your response will be shown on the whiteboard and spoken aloud. Make it a REAL teaching moment, not a generic acknowledgment. Minimum 100 words.`
         }
+
+        const promptText = duringLesson
+          ? `${SYSTEM_PROMPT}${contextMessage}${emotionalContext}${lessonContext}\n\nStudent's doubt: "${question}"\n\nGive a detailed, clear re-explanation of the step. This will appear on the whiteboard. Make it educational and complete.`
+          : `${SYSTEM_PROMPT}${contextMessage}${emotionalContext}\n\nStudent's doubt: "${question}"\n\nRespond concisely as Prof. Sharma in Hinglish (50-100 words).`
 
         const result = await model.generateContent({
-          contents: [
-            {
-              role: 'user',
-              parts: [
-                {
-                  text: `${SYSTEM_PROMPT}${contextMessage}${emotionalContext}${lessonContext}\n\nStudent's doubt: "${question}"\n\nRespond as Prof. Arjun Sharma in Hinglish. ${duringLesson ? 'Re-explain the current step in a clearer way.' : 'Keep it concise and helpful.'}`,
-                },
-              ],
-            },
-          ],
+          contents: [{ role: 'user', parts: [{ text: promptText }] }],
           generationConfig: {
-            maxOutputTokens: 300,
-            temperature: 0.7,
+            maxOutputTokens: tokenLimit,
+            temperature: temp,
           },
         })
 
-        const response = result.response
-        const text = response.text()
-
-        if (!text || text.trim().length === 0) {
-          throw new Error('Empty response from model')
-        }
+        const text = result.response.text()
+        if (!text || text.trim().length === 0) throw new Error('Empty response')
 
         return NextResponse.json({ response: text, model: modelName })
       } catch (modelError) {
         lastError = modelError instanceof Error ? modelError : new Error(String(modelError))
-        console.error(`[Gemini] Model ${modelName} failed:`, lastError.message)
-        continue // Try next model
+        console.error(`[Gemini] ${modelName} failed:`, lastError.message)
+        continue
       }
     }
 
-    // All models failed — return the actual error so user can debug
-    return NextResponse.json(
-      {
-        error: lastError?.message || 'All models failed',
-        fallback: true,
-        debug: `Tried models: ${modelsToTry.join(', ')}. Last error: ${lastError?.message}`,
-      },
-      { status: 200 }
-    )
+    return NextResponse.json({
+      error: lastError?.message || 'All models failed',
+      fallback: true,
+      debug: `Tried: ${modelsToTry.join(', ')}`,
+    }, { status: 200 })
   } catch (error: unknown) {
-    console.error('[Gemini] Request error:', error)
-    const message = error instanceof Error ? error.message : 'Unknown error'
-    return NextResponse.json(
-      { error: message, fallback: true },
-      { status: 200 }
-    )
+    console.error('[Gemini] Error:', error)
+    return NextResponse.json({
+      error: error instanceof Error ? error.message : 'Unknown error',
+      fallback: true,
+    }, { status: 200 })
   }
 }
 
-// Health check — GET /api/chat tells you if the key is configured
 export async function GET() {
   const apiKey = process.env.GEMINI_API_KEY
   const configured = !!(apiKey && apiKey !== 'your_gemini_api_key_here')
-
   return NextResponse.json({
     status: configured ? 'ready' : 'missing_key',
     keyPresent: configured,

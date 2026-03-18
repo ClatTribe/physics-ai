@@ -14,6 +14,7 @@ interface DoubtChatProps {
   isLessonActive: boolean
   isPaused: boolean
   currentStepLabel: string
+  currentStepContent: string  // Full step content (text + math + narration)
   onTeacherSpeak: (text: string) => void
   onDoubtAsked?: (question: string) => void
   onDoubtDuringLesson?: (question: string, aiResponse: string) => void
@@ -44,7 +45,7 @@ function similarity(a: string, b: string): number {
 
 export default function DoubtChat({
   currentTopic, topicTitle, coveredSteps,
-  isLessonActive, isPaused, currentStepLabel,
+  isLessonActive, isPaused, currentStepLabel, currentStepContent,
   onTeacherSpeak, onDoubtAsked, onDoubtDuringLesson,
 }: DoubtChatProps) {
   const [messages, setMessages] = useState<Message[]>([])
@@ -84,9 +85,9 @@ export default function DoubtChat({
           previousSteps: coveredSteps.join('\n'),
           repeatCount: count,
           previousAttempts: previousResponses.join('\n---\n'),
-          // NEW: tell Gemini the lesson is paused and which step confused the student
           duringLesson,
           currentStepLabel: duringLesson ? currentStepLabel : undefined,
+          currentStepContent: duringLesson ? currentStepContent : undefined,
         }),
       })
 

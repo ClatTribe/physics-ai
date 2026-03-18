@@ -415,12 +415,20 @@ export default function Home() {
             topicTitle={selectedTopic ? `${selectedTopic.title} — ${selectedTopic.titleHi}` : ''}
             coveredSteps={
               selectedTopic && currentStep >= 0
-                ? selectedTopic.steps.slice(0, currentStep + 1).map(s => `${s.label}: ${s.text || s.math || ''}`)
+                ? selectedTopic.steps.slice(0, currentStep + 1).map(s => `${s.label}: ${s.text || ''} ${s.math || ''} ${s.math2 || ''} ${s.math3 || ''}`.trim())
                 : []
             }
             isLessonActive={isPlaying}
             isPaused={isPaused}
             currentStepLabel={selectedTopic && currentStep >= 0 ? selectedTopic.steps[currentStep]?.label : ''}
+            currentStepContent={
+              selectedTopic && currentStep >= 0
+                ? (() => {
+                    const s = selectedTopic.steps[currentStep]
+                    return `Label: ${s.label}\nText: ${s.text || 'N/A'}\nFormula 1: ${s.math || 'N/A'}\nFormula 2: ${s.math2 || 'N/A'}\nFormula 3: ${s.math3 || 'N/A'}\nNarration: ${s.speech || 'N/A'}`
+                  })()
+                : ''
+            }
             onTeacherSpeak={handleDoubtSpeak}
             onDoubtAsked={(q) => setDoubtHistory(prev => [...prev, q])}
             onDoubtDuringLesson={handleDoubtDuringLesson}
