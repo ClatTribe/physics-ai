@@ -120,7 +120,7 @@ export default function DoubtChat({
     if (duringLesson) {
       setMessages(prev => [...prev, {
         role: 'system',
-        text: `⏸️ Lesson paused — Prof. Sharma is re-explaining "${currentStepLabel}"...`
+        text: `⏸️ Lesson paused — re-explaining "${currentStepLabel}" with a different approach...`
       }])
     }
 
