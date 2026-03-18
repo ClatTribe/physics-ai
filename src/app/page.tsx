@@ -7,6 +7,7 @@ import DoubtChat from '@/components/DoubtChat'
 import ConceptHeatmap from '@/components/ConceptHeatmap'
 import { topics as builtInTopics, type Topic, type Subject, type Difficulty } from '@/data/topics'
 import { initTTS, setCallbacks, speak, stopSpeaking, getTTSMode } from '@/lib/tts'
+import type { Step } from '@/data/types'
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 
@@ -14,16 +15,10 @@ const SUBJECTS: Subject[] = ['All', 'Physics', 'Chemistry', 'Mathematics']
 const DIFFICULTIES: Difficulty[] = ['All', 'Easy', 'Medium', 'Hard']
 
 const subjectColors: Record<string, string> = {
-  All: 'var(--accent)',
-  Physics: '#6c63ff',
-  Chemistry: '#00bcd4',
-  Mathematics: '#ff9800',
+  All: 'var(--accent)', Physics: '#6c63ff', Chemistry: '#00bcd4', Mathematics: '#ff9800',
 }
-
 const difficultyColors: Record<string, string> = {
-  Easy: '#00e676',
-  Medium: '#ff9100',
-  Hard: '#ff5252',
+  Easy: '#00e676', Medium: '#ff9100', Hard: '#ff5252',
 }
 
 export default function Home() {
@@ -39,7 +34,33 @@ export default function Home() {
   const [doubtHistory, setDoubtHistory] = useState<string[]>([])
   const [customTopics, setCustomTopics] = useState<Topic[]>([])
 
-  // Load custom questions from localStorage
+  // ═══ LESSON PAUSE/DOUBT STATE ═══
+  const [isPaused, setIsPaused] = useState(false)
+  // Extra steps injected by AI when re-explaining during a doubt
+  const [extraSteps, setExtraSteps] = useState<Step[]>([])
+  // All steps = original + injected extra steps
+  const displaySteps = useMemo(() => {
+    if (!selectedTopic) return []
+    // Insert extra steps right after the current step
+    if (extraSteps.length > 0 && currentStep >= 0) {
+      const before = selectedTopic.steps.slice(0, currentStep + 1)
+      const after = selectedTopic.steps.slice(currentStep + 1)
+      return [...before, ...extraSteps, ...after]
+    }
+    return selectedTopic.steps
+  }, [selectedTopic, extraSteps, currentStep])
+
+  // Display step index accounts for extra steps
+  const displayStepIndex = currentStep >= 0 ? currentStep + (isPaused || extraSteps.length > 0 ? extraSteps.length : 0) : -1
+
+  // Pause mechanism: a promise that the lesson loop awaits
+  const pauseResolveRef = useRef<(() => void) | null>(null)
+  const abortRef = useRef(false)
+
+  // Track doubts asked per step (for adapting explanations)
+  const stepDoubtsRef = useRef<Map<number, string[]>>(new Map())
+
+  // Load custom questions
   useEffect(() => {
     if (typeof window !== 'undefined') {
       try {
@@ -49,17 +70,14 @@ export default function Home() {
     }
   }, [])
 
-  // Combine built-in + custom topics
   const allTopics = useMemo(() => [...builtInTopics, ...customTopics], [customTopics])
-
-  // Filtered topics
   const filteredTopics = useMemo(() => {
     return allTopics.filter(t => {
       if (subject !== 'All' && t.subject !== subject) return false
       if (difficulty !== 'All' && t.difficulty !== difficulty) return false
       return true
     })
-  }, [subject, difficulty])
+  }, [allTopics, subject, difficulty])
 
   // Init TTS
   useEffect(() => {
@@ -72,7 +90,6 @@ export default function Home() {
     setTimeout(() => setTtsMode(getTTSMode()), 3000)
   }, [])
 
-  // Fake student count
   useEffect(() => {
     const interval = setInterval(() => {
       setStudentCount(c => Math.max(800, c + Math.floor(Math.random() * 7) - 3))
@@ -80,22 +97,49 @@ export default function Home() {
     return () => clearInterval(interval)
   }, [])
 
-  const abortRef = useRef(false)
-
+  // ═══ LESSON LOOP — pauses on doubt, waits for understanding ═══
   const startLesson = useCallback(async () => {
     if (!selectedTopic) return
     abortRef.current = false
     setIsPlaying(true)
+    setIsPaused(false)
     setCurrentStep(-1)
+    setExtraSteps([])
+    stepDoubtsRef.current = new Map()
     await sleep(300)
 
     for (let idx = 0; idx < selectedTopic.steps.length; idx++) {
       if (abortRef.current) break
+
+      // Build adapted speech: if student had doubts on previous steps,
+      // tell Gemini to be more careful/slow on similar concepts
+      const prevDoubts = Array.from(stepDoubtsRef.current.values()).flat()
+
       setCurrentStep(idx)
+      setExtraSteps([]) // Clear any extra steps from previous doubt
+
       const step = selectedTopic.steps[idx]
       if (step.speech && !abortRef.current) {
-        await speak(step.speech, speed)
+        // If student struggled before, add a gentle recap prefix
+        let speechText = step.speech
+        if (prevDoubts.length > 0 && idx > 0) {
+          speechText = step.speech // Normal speech — adaptation happens in doubt response
+        }
+        await speak(speechText, speed)
       }
+
+      if (abortRef.current) break
+
+      // ─── Check if paused (student asked a doubt) ───
+      // The lesson loop WAITS HERE until the student clicks "Continue"
+      if (isPausedRef.current) {
+        await new Promise<void>(resolve => {
+          pauseResolveRef.current = resolve
+        })
+        // After resume, clear extra steps and continue
+        setExtraSteps([])
+      }
+
       if (abortRef.current) break
       await sleep(400)
     }
@@ -103,21 +147,72 @@ export default function Home() {
     if (!abortRef.current) setIsPlaying(false)
   }, [selectedTopic, speed])
 
+  // We need a ref for isPaused so the async loop can read it
+  const isPausedRef = useRef(false)
+  useEffect(() => { isPausedRef.current = isPaused }, [isPaused])
+
   const stopLesson = () => {
     abortRef.current = true
     setIsPlaying(false)
+    setIsPaused(false)
     setCurrentStep(-1)
+    setExtraSteps([])
     stopSpeaking()
+    // Release any pending pause
+    if (pauseResolveRef.current) {
+      pauseResolveRef.current()
+      pauseResolveRef.current = null
+    }
   }
+
+  // ═══ DOUBT HANDLER — pauses lesson, gets AI re-explanation ═══
+  const handleDoubtDuringLesson = useCallback(async (question: string, aiResponse: string) => {
+    if (!isPlaying || currentStep < 0) return
+
+    // 1. Pause the lesson
+    stopSpeaking()
+    setIsPaused(true)
+    isPausedRef.current = true
+
+    // Track this doubt for the current step
+    const existing = stepDoubtsRef.current.get(currentStep) || []
+    stepDoubtsRef.current.set(currentStep, [...existing, question])
+
+    // 2. Inject AI re-explanation as an extra whiteboard step
+    const extraStep: Step = {
+      label: '🧠 Re-explanation — Doubt Clarification',
+      text: aiResponse,
+      speech: aiResponse,
+      highlight: true,
+    }
+    setExtraSteps([extraStep])
+
+    // 3. Speak the re-explanation
+    await speak(aiResponse, speed)
+  }, [isPlaying, currentStep, speed])
+
+  // Student clicks "Got it! Continue" — resumes the lesson
+  const handleResume = useCallback(() => {
+    setIsPaused(false)
+    isPausedRef.current = false
+    setExtraSteps([])
+    if (pauseResolveRef.current) {
+      pauseResolveRef.current()
+      pauseResolveRef.current = null
+    }
+  }, [])
 
   const handleTopicSelect = (topic: Topic) => {
     if (isPlaying) stopLesson()
     setSelectedTopic(topic)
     setCurrentStep(-1)
+    setExtraSteps([])
+    setDoubtHistory([])
   }
 
   const handleDoubtSpeak = (text: string) => {
-    speak(text, speed)
+    // Only speak if NOT paused (during pause, handleDoubtDuringLesson speaks)
+    if (!isPaused) speak(text, speed)
   }
 
   const progress = selectedTopic && currentStep >= 0
@@ -138,10 +233,15 @@ export default function Home() {
           <a href="/admin" className="text-[10px] font-semibold px-2 py-0.5 rounded bg-[var(--surface2)] text-[var(--text-dim)] hover:text-white transition-colors">
             ⚙️ Admin
           </a>
-          {isPlaying && (
+          {isPlaying && !isPaused && (
             <div className="flex items-center gap-1.5 bg-red-500/15 text-red-400 px-3 py-1 rounded-full text-xs font-semibold">
               <div className="w-2 h-2 bg-red-400 rounded-full" style={{animation:'livePulse 1.5s infinite'}} />
               LIVE
+            </div>
+          )}
+          {isPaused && (
+            <div className="flex items-center gap-1.5 bg-orange-500/15 text-orange-400 px-3 py-1 rounded-full text-xs font-semibold">
+              ⏸️ PAUSED — Doubt Mode
             </div>
           )}
         </div>
@@ -149,14 +249,11 @@ export default function Home() {
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-1.5 text-sm text-[var(--text-dim)]">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
-              <circle cx="9" cy="7" r="4"/>
-              <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
-              <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
+              <path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
             </svg>
             {studentCount} online
           </div>
-
           <div className={`text-[10px] font-semibold px-2 py-0.5 rounded ${
             ttsMode === 'api' ? 'bg-green-400/10 text-green-400'
               : ttsMode === 'detecting' ? 'bg-yellow-400/10 text-yellow-400'
@@ -164,7 +261,6 @@ export default function Home() {
           }`}>
             {ttsMode === 'api' ? '🔊 Neural' : ttsMode === 'detecting' ? '⏳...' : '🔈 Browser'}
           </div>
-
           <div className="flex items-center gap-1.5 text-xs text-[var(--text-dim)]">
             Speed:
             {[0.5, 1, 1.5, 2].map(s => (
@@ -182,100 +278,64 @@ export default function Home() {
       <div className="flex flex-1 overflow-hidden">
         {/* ─── Sidebar ─── */}
         <aside className="w-[310px] bg-[var(--surface)] border-r border-[var(--border)] flex flex-col shrink-0">
-          {/* Avatar */}
           <div className="p-4 border-b border-[var(--border)]">
             <Avatar isSpeaking={isSpeaking} />
           </div>
 
-          {/* Concept Mastery Heatmap — shows when a topic is selected */}
           {selectedTopic && (
             <div className="px-3 pt-3 pb-1 border-b border-[var(--border)]">
-              <ConceptHeatmap
-                topicId={selectedTopic.id}
-                currentStep={currentStep}
-                doubtHistory={doubtHistory}
-              />
+              <ConceptHeatmap topicId={selectedTopic.id} currentStep={currentStep} doubtHistory={doubtHistory} />
             </div>
           )}
 
-          {/* Subject Tabs */}
           <div className="px-3 pt-3 pb-1">
             <div className="flex gap-1">
               {SUBJECTS.map(s => (
                 <button key={s} onClick={() => setSubject(s)}
                   className={`flex-1 px-1 py-1.5 rounded-lg text-[11px] font-semibold transition-all
-                    ${subject === s
-                      ? 'text-white'
-                      : 'text-[var(--text-dim)] hover:bg-[var(--surface2)]'
-                    }`}
-                  style={subject === s ? { background: subjectColors[s] } : undefined}
-                >
+                    ${subject === s ? 'text-white' : 'text-[var(--text-dim)] hover:bg-[var(--surface2)]'}`}
+                  style={subject === s ? { background: subjectColors[s] } : undefined}>
                   {s === 'All' ? '📚 All' : s === 'Physics' ? '⚡ Phy' : s === 'Chemistry' ? '🧪 Chem' : '📐 Math'}
                 </button>
               ))}
             </div>
           </div>
 
-          {/* Difficulty Filter */}
           <div className="px-3 pb-2">
             <div className="flex gap-1">
               {DIFFICULTIES.map(d => (
                 <button key={d} onClick={() => setDifficulty(d)}
                   className={`flex-1 px-1 py-1 rounded-md text-[10px] font-semibold transition-all border
-                    ${difficulty === d
-                      ? 'text-white border-transparent'
-                      : 'text-[var(--text-dim)] border-[var(--border)] hover:bg-[var(--surface2)]'
-                    }`}
-                  style={difficulty === d && d !== 'All'
-                    ? { background: difficultyColors[d] }
-                    : difficulty === d ? { background: 'var(--accent)' } : undefined
-                  }
-                >
+                    ${difficulty === d ? 'text-white border-transparent' : 'text-[var(--text-dim)] border-[var(--border)] hover:bg-[var(--surface2)]'}`}
+                  style={difficulty === d && d !== 'All' ? { background: difficultyColors[d] } : difficulty === d ? { background: 'var(--accent)' } : undefined}>
                   {d}
                 </button>
               ))}
             </div>
           </div>
 
-          {/* Question count */}
-          <div className="px-4 pb-2 text-[11px] text-[var(--text-dim)]">
-            {filteredTopics.length} questions
-          </div>
+          <div className="px-4 pb-2 text-[11px] text-[var(--text-dim)]">{filteredTopics.length} questions</div>
 
-          {/* Topic list */}
           <div className="flex-1 overflow-y-auto px-3 pb-3">
             {filteredTopics.map(topic => (
-              <button
-                key={topic.id}
-                onClick={() => handleTopicSelect(topic)}
+              <button key={topic.id} onClick={() => handleTopicSelect(topic)}
                 className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-[10px] text-left transition-all mb-1
-                  ${selectedTopic?.id === topic.id
-                    ? 'bg-[rgba(108,99,255,0.15)] border border-[rgba(108,99,255,0.3)]'
-                    : 'hover:bg-[var(--surface2)] border border-transparent'
-                  }`}
-              >
+                  ${selectedTopic?.id === topic.id ? 'bg-[rgba(108,99,255,0.15)] border border-[rgba(108,99,255,0.3)]' : 'hover:bg-[var(--surface2)] border border-transparent'}`}>
                 <div className="w-8 h-8 rounded-lg flex items-center justify-center text-sm shrink-0"
-                  style={{ background: `${topic.color}20`, color: topic.color }}>
-                  {topic.icon}
-                </div>
+                  style={{ background: `${topic.color}20`, color: topic.color }}>{topic.icon}</div>
                 <div className="min-w-0 flex-1">
                   <div className="text-[12px] font-semibold truncate">{topic.title}</div>
                   <div className="flex items-center gap-1.5 mt-0.5">
                     <span className="text-[9px] px-1.5 py-0.5 rounded font-semibold"
-                      style={{ background: `${difficultyColors[topic.difficulty]}20`, color: difficultyColors[topic.difficulty] }}>
-                      {topic.difficulty}
-                    </span>
+                      style={{ background: `${difficultyColors[topic.difficulty]}20`, color: difficultyColors[topic.difficulty] }}>{topic.difficulty}</span>
                     <span className="text-[9px] text-[var(--text-dim)]">{topic.exam}</span>
                     <span className="text-[9px] text-[var(--text-dim)]">• {topic.chapter}</span>
                   </div>
                 </div>
               </button>
             ))}
-
             {filteredTopics.length === 0 && (
-              <div className="text-center text-sm text-[var(--text-dim)] py-8">
-                No questions match this filter
-              </div>
+              <div className="text-center text-sm text-[var(--text-dim)] py-8">No questions match this filter</div>
             )}
           </div>
         </aside>
@@ -287,7 +347,13 @@ export default function Home() {
               {selectedTopic ? selectedTopic.titleHi : 'Question select karo →'}
             </div>
             <div className="flex items-center gap-2 shrink-0">
-              {isPlaying && (
+              {isPaused && (
+                <button onClick={handleResume}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold bg-green-500 text-white shadow-[0_2px_12px_rgba(0,230,118,0.3)] hover:bg-green-600 transition-colors animate-pulse">
+                  ✅ Samajh aa gaya! Continue →
+                </button>
+              )}
+              {isPlaying && !isPaused && (
                 <button onClick={stopLesson}
                   className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold bg-red-500/15 text-red-400 border border-red-500/20 hover:bg-red-500/25 transition-colors">
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
@@ -297,20 +363,23 @@ export default function Home() {
               <button onClick={startLesson} disabled={!selectedTopic || isPlaying}
                 className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold bg-orange-500 text-white shadow-[0_2px_12px_rgba(255,150,0,0.3)] hover:shadow-[0_4px_20px_rgba(255,150,0,0.3)] hover:-translate-y-px transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:translate-y-0">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>
-                {isPlaying ? 'Playing...' : 'Start Lesson'}
+                {isPlaying ? (isPaused ? 'Paused' : 'Playing...') : 'Start Lesson'}
               </button>
             </div>
           </div>
 
-          {/* Progress */}
           <div className="h-[3px] mx-5 mt-2 bg-[var(--surface2)] rounded-full overflow-hidden">
             <div className="h-full rounded-full transition-all duration-500 bg-gradient-to-r from-orange-500 to-yellow-400"
               style={{ width: `${progress}%` }} />
           </div>
 
-          {/* Whiteboard or Welcome */}
           {selectedTopic && currentStep >= 0 ? (
-            <Whiteboard steps={selectedTopic.steps} currentStepIndex={currentStep} isPlaying={isPlaying} diagram={selectedTopic.diagram} />
+            <Whiteboard
+              steps={displaySteps}
+              currentStepIndex={currentStep + extraSteps.length}
+              isPlaying={isPlaying}
+              diagram={selectedTopic.diagram}
+            />
           ) : (
             <div className="flex-1 flex items-center justify-center">
               <div className="text-center px-10 max-w-md">
@@ -327,8 +396,7 @@ export default function Home() {
                 <p className="text-[var(--text-dim)] text-sm leading-relaxed">
                   {selectedTopic
                     ? `"Start Lesson" press karo — Prof. Sharma step-by-step solve karenge Hindi + English mein.`
-                    : `30 NTA-style questions — Physics, Chemistry, Maths. Easy se Hard tak. Select karo aur AI teacher se seekho!`
-                  }
+                    : `30 NTA-style questions — Physics, Chemistry, Maths. Easy se Hard tak. Select karo aur AI teacher se seekho!`}
                 </p>
                 {!selectedTopic && (
                   <div className="mt-4 flex items-center justify-center gap-2 text-xs text-[var(--text-dim)]">
@@ -342,7 +410,6 @@ export default function Home() {
             </div>
           )}
 
-          {/* Doubt Chat */}
           <DoubtChat
             currentTopic={selectedTopic?.id || ''}
             topicTitle={selectedTopic ? `${selectedTopic.title} — ${selectedTopic.titleHi}` : ''}
@@ -351,8 +418,12 @@ export default function Home() {
                 ? selectedTopic.steps.slice(0, currentStep + 1).map(s => `${s.label}: ${s.text || s.math || ''}`)
                 : []
             }
+            isLessonActive={isPlaying}
+            isPaused={isPaused}
+            currentStepLabel={selectedTopic && currentStep >= 0 ? selectedTopic.steps[currentStep]?.label : ''}
             onTeacherSpeak={handleDoubtSpeak}
             onDoubtAsked={(q) => setDoubtHistory(prev => [...prev, q])}
+            onDoubtDuringLesson={handleDoubtDuringLesson}
           />
         </main>
       </div>

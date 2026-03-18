@@ -26,7 +26,7 @@ RESPONSE FORMAT:
 
 export async function POST(request: NextRequest) {
   try {
-    const { question, topicContext, previousSteps, repeatCount, previousAttempts } = await request.json()
+    const { question, topicContext, previousSteps, repeatCount, previousAttempts, duringLesson, currentStepLabel } = await request.json()
 
     const apiKey = process.env.GEMINI_API_KEY
     if (!apiKey || apiKey === 'your_gemini_api_key_here') {
@@ -68,13 +68,25 @@ export async function POST(request: NextRequest) {
           emotionalContext = `\n\nNote: Student asked a similar question before. Rephrase your explanation using a different angle or example. Say "Achha, main ek aur tarike se samjhata hoon..." Previous explanation:\n${previousAttempts || 'N/A'}`
         }
 
+        // Mid-lesson doubt: the lesson is PAUSED waiting for understanding
+        let lessonContext = ''
+        if (duringLesson && currentStepLabel) {
+          lessonContext = `\n\n🎯 CRITICAL CONTEXT: The student asked this doubt DURING a live lesson. The lesson is now PAUSED at step "${currentStepLabel}". You must:
+1. Go BACK to this specific step and re-explain it more clearly
+2. Use a simpler example or analogy specific to what confused them
+3. Break the step into even smaller sub-steps
+4. After explaining, encourage them: "Ab samajh aaya? Agar haan toh Continue press karo, nahi toh aur poocho!"
+5. Keep your response focused on THIS step only — don't jump ahead
+6. Response should be 80-150 words — detailed enough to clarify but not overwhelming`
+        }
+
         const result = await model.generateContent({
           contents: [
             {
               role: 'user',
               parts: [
                 {
-                  text: `${SYSTEM_PROMPT}${contextMessage}${emotionalContext}\n\nStudent's doubt: "${question}"\n\nRespond as Prof. Arjun Sharma in Hinglish. Keep it concise and helpful.`,
+                  text: `${SYSTEM_PROMPT}${contextMessage}${emotionalContext}${lessonContext}\n\nStudent's doubt: "${question}"\n\nRespond as Prof. Arjun Sharma in Hinglish. ${duringLesson ? 'Re-explain the current step in a clearer way.' : 'Keep it concise and helpful.'}`,
                 },
               ],
             },

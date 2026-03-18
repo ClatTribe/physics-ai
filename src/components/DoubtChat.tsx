@@ -11,74 +11,67 @@ interface DoubtChatProps {
   currentTopic: string
   topicTitle: string
   coveredSteps: string[]
+  isLessonActive: boolean
+  isPaused: boolean
+  currentStepLabel: string
   onTeacherSpeak: (text: string) => void
-  onDoubtAsked?: (question: string) => void  // For concept heatmap
+  onDoubtAsked?: (question: string) => void
+  onDoubtDuringLesson?: (question: string, aiResponse: string) => void
 }
 
-// Offline fallback responses
+// Offline fallback
 const fallbackResponses = [
   'Bahut accha doubt hai! Is concept ko samajhne ke liye, pehle basic formula yaad karo, phir derivation se connect karo.',
   'Good question! JEE mein is type ke problems frequently aate hain. Fundamentals strong hone chahiye.',
   'Ye ek common confusion hai. NCERT se concept padho, phir previous year papers solve karo.',
-  'Bilkul sahi direction mein soch rahe ho! Practice se sab clear hoga.',
 ]
 
-// ─── Similarity Detection ───────────────────────
-// Simple keyword overlap to detect if student is asking the same thing
+// Keyword overlap for repeat detection
 function extractKeywords(text: string): Set<string> {
-  const stopWords = new Set(['the','a','is','in','it','of','to','and','for','on','hai','ka','ke','ki','ko','se','mein','kya','ye','wo','kaise','kyu','kyun','why','how','what','when','where','which','do','does','did','can','could','should','would','will','was','were','been','have','has','had','this','that','these','those','i','me','my','please','sir','bhai','help'])
+  const stop = new Set(['the','a','is','in','it','of','to','and','for','on','hai','ka','ke','ki','ko','se','mein','kya','ye','wo','kaise','kyu','kyun','why','how','what','when','where','which','i','me','my','please','sir','bhai','help','do','does','can'])
   return new Set(
-    text.toLowerCase()
-      .replace(/[^a-zA-Z0-9\u0900-\u097F\s]/g, '')
-      .split(/\s+/)
-      .filter(w => w.length > 2 && !stopWords.has(w))
+    text.toLowerCase().replace(/[^a-zA-Z0-9\u0900-\u097F\s]/g, '').split(/\s+/).filter(w => w.length > 2 && !stop.has(w))
   )
 }
 
 function similarity(a: string, b: string): number {
-  const kw1 = extractKeywords(a)
-  const kw2 = extractKeywords(b)
-  if (kw1.size === 0 || kw2.size === 0) return 0
+  const kw1 = extractKeywords(a), kw2 = extractKeywords(b)
+  if (!kw1.size || !kw2.size) return 0
   let overlap = 0
   kw1.forEach(w => { if (kw2.has(w)) overlap++ })
   return overlap / Math.max(kw1.size, kw2.size)
 }
 
-export default function DoubtChat({ currentTopic, topicTitle, coveredSteps, onTeacherSpeak, onDoubtAsked }: DoubtChatProps) {
+export default function DoubtChat({
+  currentTopic, topicTitle, coveredSteps,
+  isLessonActive, isPaused, currentStepLabel,
+  onTeacherSpeak, onDoubtAsked, onDoubtDuringLesson,
+}: DoubtChatProps) {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [isThinking, setIsThinking] = useState(false)
   const [geminiAvailable, setGeminiAvailable] = useState<boolean | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
-
-  // Emotional intelligence state
   const doubtHistoryRef = useRef<{ question: string; response: string }[]>([])
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
   }, [messages])
 
-  // Reset on topic change
   useEffect(() => {
     setMessages([])
     doubtHistoryRef.current = []
   }, [currentTopic])
 
-  // Detect how many times the student asked about the same concept
-  const detectRepeat = useCallback((question: string): { count: number; previousResponses: string[] } => {
-    const history = doubtHistoryRef.current
+  const detectRepeat = useCallback((question: string) => {
     const similar: string[] = []
-
-    for (const entry of history) {
-      if (similarity(question, entry.question) > 0.35) {
-        similar.push(entry.response)
-      }
+    for (const entry of doubtHistoryRef.current) {
+      if (similarity(question, entry.question) > 0.35) similar.push(entry.response)
     }
-
     return { count: similar.length + 1, previousResponses: similar }
   }, [])
 
-  const askGemini = async (question: string): Promise<string> => {
+  const askGemini = async (question: string, duringLesson: boolean): Promise<string> => {
     const { count, previousResponses } = detectRepeat(question)
 
     try {
@@ -91,99 +84,90 @@ export default function DoubtChat({ currentTopic, topicTitle, coveredSteps, onTe
           previousSteps: coveredSteps.join('\n'),
           repeatCount: count,
           previousAttempts: previousResponses.join('\n---\n'),
+          // NEW: tell Gemini the lesson is paused and which step confused the student
+          duringLesson,
+          currentStepLabel: duringLesson ? currentStepLabel : undefined,
         }),
       })
 
-      if (!res.ok) {
-        setGeminiAvailable(false)
-        return getFallbackResponse()
-      }
-
+      if (!res.ok) { setGeminiAvailable(false); return getFallback() }
       const data = await res.json()
-
-      if (data.fallback) {
-        setGeminiAvailable(false)
-        return getFallbackResponse()
-      }
-
-      if (data.response) {
-        setGeminiAvailable(true)
-        return data.response
-      }
-
+      if (data.fallback) { setGeminiAvailable(false); return getFallback() }
+      if (data.response) { setGeminiAvailable(true); return data.response }
       setGeminiAvailable(false)
-      return getFallbackResponse()
+      return getFallback()
     } catch {
       setGeminiAvailable(false)
-      return getFallbackResponse()
+      return getFallback()
     }
   }
 
-  const getFallbackResponse = (): string => {
-    return fallbackResponses[Math.floor(Math.random() * fallbackResponses.length)]
-  }
+  const getFallback = () => fallbackResponses[Math.floor(Math.random() * fallbackResponses.length)]
 
   const handleSubmit = async () => {
     if (!input.trim() || isThinking) return
-
     const question = input.trim()
     setInput('')
 
-    // Notify parent (for concept heatmap)
     onDoubtAsked?.(question)
 
-    // Check for repeat and show system message
     const { count } = detectRepeat(question)
+    const duringLesson = isLessonActive
 
     setMessages(prev => [...prev, { role: 'student', text: question }])
+
+    if (duringLesson) {
+      setMessages(prev => [...prev, {
+        role: 'system',
+        text: `⏸️ Lesson paused — Prof. Sharma is re-explaining "${currentStepLabel}"...`
+      }])
+    }
 
     if (count >= 3) {
       setMessages(prev => [...prev, {
         role: 'system',
-        text: `🧠 Same concept detected ${count}x — switching teaching approach...`
+        text: `🧠 Same concept ${count}x — trying a completely different explanation...`
       }])
     }
 
     setIsThinking(true)
-
-    const response = await askGemini(question)
-
-    // Store in history for repeat detection
+    const response = await askGemini(question, duringLesson)
     doubtHistoryRef.current.push({ question, response })
 
     setMessages(prev => [...prev, { role: 'teacher', text: response }])
     setIsThinking(false)
-    onTeacherSpeak(response)
+
+    // If lesson is active, this triggers pause + whiteboard re-explanation
+    if (duringLesson && onDoubtDuringLesson) {
+      onDoubtDuringLesson(question, response)
+    } else {
+      onTeacherSpeak(response)
+    }
   }
 
   return (
     <div className="border-t border-[var(--border)] bg-[var(--surface)]">
-      {/* Messages area */}
+      {/* Paused banner */}
+      {isPaused && (
+        <div className="px-4 py-2 bg-orange-500/10 border-b border-orange-500/20 text-orange-400 text-xs font-semibold flex items-center gap-2">
+          <span>⏸️ Lesson paused.</span>
+          <span className="text-[var(--text-dim)]">Ask more doubts or click "Samajh aa gaya! Continue →" above to resume.</span>
+        </div>
+      )}
+
       {messages.length > 0 && (
         <div ref={scrollRef} className="max-h-[220px] overflow-y-auto p-3 space-y-2">
           {messages.map((msg, i) => (
-            <div key={i} className={`flex ${
-              msg.role === 'student' ? 'justify-end'
-              : msg.role === 'system' ? 'justify-center'
-              : 'justify-start'
-            }`}>
+            <div key={i} className={`flex ${msg.role === 'student' ? 'justify-end' : msg.role === 'system' ? 'justify-center' : 'justify-start'}`}>
               {msg.role === 'system' ? (
-                <div className="text-[11px] text-orange-400 bg-orange-400/10 px-3 py-1 rounded-full">
-                  {msg.text}
-                </div>
+                <div className="text-[11px] text-orange-400 bg-orange-400/10 px-3 py-1 rounded-full">{msg.text}</div>
               ) : (
                 <div className={`max-w-[80%] rounded-xl px-3.5 py-2.5 text-sm leading-relaxed
-                  ${msg.role === 'student'
-                    ? 'bg-orange-500 text-white rounded-br-sm'
-                    : 'bg-[var(--surface2)] text-[var(--text)] rounded-bl-sm border border-[var(--border)]'
-                  }`}
-                >
+                  ${msg.role === 'student' ? 'bg-orange-500 text-white rounded-br-sm' : 'bg-[var(--surface2)] text-[var(--text)] rounded-bl-sm border border-[var(--border)]'}`}>
                   {msg.role === 'teacher' && (
                     <div className="flex items-center gap-1.5 mb-1">
                       <div className="text-[10px] font-bold text-green-400">Prof. Sharma</div>
-                      {geminiAvailable === true && (
-                        <div className="text-[9px] px-1.5 py-0.5 rounded bg-[rgba(108,99,255,0.15)] text-[var(--accent)] font-semibold">AI</div>
-                      )}
+                      {geminiAvailable && <div className="text-[9px] px-1.5 py-0.5 rounded bg-[rgba(108,99,255,0.15)] text-[var(--accent)] font-semibold">AI</div>}
                     </div>
                   )}
                   {msg.text}
@@ -191,7 +175,6 @@ export default function DoubtChat({ currentTopic, topicTitle, coveredSteps, onTe
               )}
             </div>
           ))}
-
           {isThinking && (
             <div className="flex justify-start">
               <div className="bg-[var(--surface2)] rounded-xl px-3.5 py-2.5 text-sm border border-[var(--border)] rounded-bl-sm">
@@ -200,7 +183,9 @@ export default function DoubtChat({ currentTopic, topicTitle, coveredSteps, onTe
                   <div className="w-1.5 h-1.5 bg-[var(--text-dim)] rounded-full animate-bounce" style={{animationDelay:'0s'}} />
                   <div className="w-1.5 h-1.5 bg-[var(--text-dim)] rounded-full animate-bounce" style={{animationDelay:'0.15s'}} />
                   <div className="w-1.5 h-1.5 bg-[var(--text-dim)] rounded-full animate-bounce" style={{animationDelay:'0.3s'}} />
-                  <span className="text-xs text-[var(--text-dim)] ml-1">Soch raha hoon...</span>
+                  <span className="text-xs text-[var(--text-dim)] ml-1">
+                    {isLessonActive ? 'Re-explaining this step...' : 'Soch raha hoon...'}
+                  </span>
                 </div>
               </div>
             </div>
@@ -208,15 +193,17 @@ export default function DoubtChat({ currentTopic, topicTitle, coveredSteps, onTe
         </div>
       )}
 
-      {/* Input bar */}
       <div className="flex items-center gap-2.5 p-3">
         <div className="flex-1 relative">
-          <input
-            type="text"
-            value={input}
-            onChange={e => setInput(e.target.value)}
+          <input type="text" value={input} onChange={e => setInput(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && handleSubmit()}
-            placeholder={currentTopic ? "Doubt poocho... Hindi ya English mein!" : "Pehle ek topic select karo..."}
+            placeholder={
+              isLessonActive
+                ? isPaused
+                  ? "Aur doubt hai? Poocho... ya 'Continue' press karo ↑"
+                  : "Doubt? Type karo — lesson automatically pause hoga!"
+                : currentTopic ? "Doubt poocho... Hindi ya English mein!" : "Pehle ek topic select karo..."
+            }
             disabled={!currentTopic}
             className="w-full px-4 py-2.5 bg-[var(--surface2)] border border-[var(--border)] rounded-xl text-[var(--text)] text-sm outline-none focus:border-orange-500 transition-colors placeholder:text-[var(--text-dim)] disabled:opacity-40 pr-20"
           />
@@ -230,9 +217,9 @@ export default function DoubtChat({ currentTopic, topicTitle, coveredSteps, onTe
         <button onClick={handleSubmit} disabled={!input.trim() || isThinking || !currentTopic}
           className="px-4 py-2.5 bg-orange-500 text-white rounded-xl text-sm font-semibold hover:bg-orange-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5 shrink-0">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <line x1="22" y1="2" x2="11" y2="13" /><polygon points="22,2 15,22 11,13 2,9" />
+            <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22,2 15,22 11,13 2,9"/>
           </svg>
-          Poocho
+          {isLessonActive ? '⏸️ Ask' : 'Poocho'}
         </button>
       </div>
     </div>
