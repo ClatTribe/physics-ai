@@ -1,136 +1,101 @@
 'use client'
 
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 interface AvatarProps {
   isSpeaking: boolean
 }
 
 /**
- * Avatar with loose lip-sync using CSS split-face technique
+ * Avatar with real video lip-sync
  *
- * Instead of drawing a fake mouth on canvas (which never aligns),
- * we split the real face photo into upper + lower halves.
- * The lower half (jaw area) moves down slightly when speaking,
- * creating a natural "talking" effect with the real image pixels.
+ * HOW IT WORKS:
+ * - Uses a looping video of a person talking
+ * - When isSpeaking=true → video plays (natural lip movement)
+ * - When isSpeaking=false → video pauses (still face)
+ * - Falls back to static image if video fails to load
  *
- * - Upper half: eyes, forehead — stays still
- * - Lower half: mouth, chin — bobs up/down randomly
- * - Both halves use the same image with clip-path
- * - Random timing creates natural, non-robotic movement
+ * TO CUSTOMIZE: Replace AVATAR_VIDEO_URL with your own video:
+ * - Record a 10-30 second video of a teacher talking (head & shoulders)
+ * - Upload to your public folder, S3, or any CDN
+ * - Set the URL below
+ *
+ * You can also generate a talking avatar video using:
+ * - D-ID (https://d-id.com) — upload a photo, get a talking video
+ * - HeyGen (https://heygen.com) — AI avatar video generation
+ * - Synthesia (https://synthesia.io) — similar service
  */
+
+// Default: free stock video of a man talking (Pexels)
+// Replace this with your own teacher's talking video for best results
+const AVATAR_VIDEO_URL = 'https://videos.pexels.com/video-files/4623532/4623532-sd_640_360_30fps.mp4'
+
+// Fallback static image
+const AVATAR_IMAGE_URL = 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=400&h=400&fit=crop&crop=face'
+
 export default function Avatar({ isSpeaking }: AvatarProps) {
-  const FACE_URL = 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=400&h=400&fit=crop&crop=face'
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const [videoLoaded, setVideoLoaded] = useState(false)
+  const [videoError, setVideoError] = useState(false)
 
-  // Jaw animation state
-  const [jawOffset, setJawOffset] = useState(0)
-  const [headTilt, setHeadTilt] = useState(0)
-  const animRef = useRef<number>(0)
-  const stateRef = useRef({
-    target: 0,
-    current: 0,
-    nextChange: 0,
-    frame: 0,
-  })
-
-  const animate = useCallback(() => {
-    const st = stateRef.current
-    st.frame++
-
-    if (isSpeaking) {
-      // Pick new jaw position at random intervals
-      if (st.frame >= st.nextChange) {
-        const r = Math.random()
-        // Weighted: mostly small-medium movements, occasional wide
-        if (r < 0.12) st.target = 0        // mouth closed (pause)
-        else if (r < 0.45) st.target = 2 + Math.random() * 2   // small open
-        else if (r < 0.8) st.target = 4 + Math.random() * 3    // medium open
-        else st.target = 7 + Math.random() * 3                  // wide open (emphasis)
-
-        // Vary timing: 2-6 frames between changes
-        st.nextChange = st.frame + 2 + Math.floor(Math.random() * 5)
-      }
-    } else {
-      st.target = 0
-    }
-
-    // Smooth interpolation
-    st.current += (st.target - st.current) * 0.25
-    setJawOffset(st.current)
-
-    // Subtle head tilt while speaking
-    if (isSpeaking) {
-      setHeadTilt(Math.sin(st.frame / 40) * 0.8 + Math.sin(st.frame / 25) * 0.4)
-    } else {
-      setHeadTilt(prev => prev * 0.95)
-    }
-
-    animRef.current = requestAnimationFrame(animate)
-  }, [isSpeaking])
-
+  // Play/pause video based on speaking state
   useEffect(() => {
-    animRef.current = requestAnimationFrame(animate)
-    return () => cancelAnimationFrame(animRef.current)
-  }, [animate])
+    const video = videoRef.current
+    if (!video || !videoLoaded) return
 
-  // Split point: 55% from top (roughly where upper lip meets)
-  const splitPercent = 55
+    if (isSpeaking) {
+      video.play().catch(() => {
+        // Autoplay blocked — try muted
+        video.muted = true
+        video.play().catch(() => setVideoError(true))
+      })
+    } else {
+      video.pause()
+    }
+  }, [isSpeaking, videoLoaded])
 
   return (
     <div className="flex flex-col items-center gap-3">
-      {/* Face container */}
+      {/* Face container — circular */}
       <div className={`relative rounded-full overflow-hidden avatar-ring ${isSpeaking ? 'speaking' : ''}`}
         style={{ width: 180, height: 180 }}>
 
-        {/* Upper face (eyes, forehead) — stays still */}
-        <div
-          className="absolute inset-0"
-          style={{
-            clipPath: `inset(0 0 ${100 - splitPercent}% 0)`,
-            transform: `rotate(${headTilt * 0.3}deg)`,
-            transition: 'transform 0.15s ease',
-          }}
-        >
-          <img
-            src={FACE_URL}
-            alt="Prof. Arjun Sharma"
-            className="w-full h-full object-cover"
-            crossOrigin="anonymous"
-          />
-        </div>
-
-        {/* Lower face (mouth, chin) — moves down when speaking */}
-        <div
-          className="absolute inset-0"
-          style={{
-            clipPath: `inset(${splitPercent}% 0 0 0)`,
-            transform: `translateY(${jawOffset}px) rotate(${headTilt * 0.3}deg) scaleY(${1 + jawOffset * 0.005})`,
-            transition: 'transform 0.06s ease-out',
-          }}
-        >
-          <img
-            src={FACE_URL}
-            alt=""
-            className="w-full h-full object-cover"
-            crossOrigin="anonymous"
-            aria-hidden="true"
-          />
-        </div>
-
-        {/* Dark gap between halves when jaw drops (inner mouth) */}
-        {jawOffset > 1.5 && (
-          <div
-            className="absolute left-1/2 -translate-x-1/2"
+        {/* Video layer — shows when loaded */}
+        {!videoError && (
+          <video
+            ref={videoRef}
+            src={AVATAR_VIDEO_URL}
+            loop
+            muted
+            playsInline
+            preload="auto"
+            onLoadedData={() => setVideoLoaded(true)}
+            onError={() => setVideoError(true)}
+            className="absolute inset-0 w-full h-full object-cover"
             style={{
-              top: `${splitPercent}%`,
-              width: `${28 + jawOffset * 2}%`,
-              height: `${Math.min(jawOffset * 1.2, 12)}px`,
-              background: `radial-gradient(ellipse, rgba(40,15,15,${Math.min(jawOffset * 0.08, 0.7)}) 0%, rgba(40,15,15,0) 80%)`,
-              borderRadius: '50%',
-              pointerEvents: 'none',
+              // Subtle zoom to crop out video edges and focus on face
+              transform: 'scale(1.3)',
+              transformOrigin: 'center 35%',
             }}
           />
         )}
+
+        {/* Fallback: static image (shows if video fails or before video loads) */}
+        {(videoError || !videoLoaded) && (
+          <img
+            src={AVATAR_IMAGE_URL}
+            alt="Prof. Arjun Sharma"
+            className="absolute inset-0 w-full h-full object-cover"
+          />
+        )}
+
+        {/* Subtle dark vignette around edges */}
+        <div className="absolute inset-0 rounded-full"
+          style={{
+            background: 'radial-gradient(circle, transparent 55%, rgba(0,0,0,0.3) 100%)',
+            pointerEvents: 'none',
+          }}
+        />
 
         {/* Speaking indicator */}
         {isSpeaking && (
