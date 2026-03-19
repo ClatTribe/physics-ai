@@ -54,6 +54,8 @@ export default function Home() {
   // Display step index accounts for extra steps
   const displayStepIndex = currentStep >= 0 ? currentStep + (isPaused || extraSteps.length > 0 ? extraSteps.length : 0) : -1
 
+  const [weakSpots, setWeakSpots] = useState<string[]>([])
+
   // Pause mechanism: a promise that the lesson loop awaits
   const pauseResolveRef = useRef<(() => void) | null>(null)
   const abortRef = useRef(false)
@@ -292,7 +294,7 @@ export default function Home() {
 
           {selectedTopic && (
             <div className="px-3 pt-3 pb-1 border-b border-[var(--border)]">
-              <ConceptHeatmap topicId={selectedTopic.id} currentStep={currentStep} doubtHistory={doubtHistory} />
+              <ConceptHeatmap topicId={selectedTopic.id} currentStep={currentStep} doubtHistory={doubtHistory} weakSpots={weakSpots} />
             </div>
           )}
 
@@ -441,6 +443,7 @@ export default function Home() {
             onTeacherSpeak={handleDoubtSpeak}
             onDoubtAsked={(q) => setDoubtHistory(prev => [...prev, q])}
             onDoubtDuringLesson={handleDoubtDuringLesson}
+            onWeakSpotUpdate={setWeakSpots}
           />
         </main>
       </div>

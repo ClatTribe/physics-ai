@@ -6,6 +6,7 @@ interface ConceptHeatmapProps {
   topicId: string;
   currentStep: number;
   doubtHistory: string[];
+  weakSpots?: string[];
 }
 
 type MasteryLevel = 'not_covered' | 'covered' | 'mastered' | 'needs_review';
@@ -94,7 +95,8 @@ const LEGEND_CONFIG = [
 export default function ConceptHeatmap({
   topicId,
   currentStep,
-  doubtHistory
+  doubtHistory,
+  weakSpots = [],
 }: ConceptHeatmapProps) {
   const concepts = CONCEPT_MAP[topicId] || [
     'Concept 1',
@@ -107,13 +109,21 @@ export default function ConceptHeatmap({
 
   const conceptStatuses = useMemo<ConceptStatus[]>(() => {
     return concepts.map((concept, index) => {
+      // Check if concept is a confirmed weak spot (from Socratic dialogue)
+      const isWeakSpot = weakSpots.some(ws =>
+        ws.toLowerCase().includes(concept.toLowerCase()) ||
+        concept.toLowerCase().includes(ws.toLowerCase())
+      );
+      if (isWeakSpot) {
+        return { name: concept, level: 'needs_review' };
+      }
+
       // Check if concept needs review based on doubt history
       const needsReview = doubtHistory.some(doubt =>
         concept.toLowerCase().split(' ').some(word =>
-          doubt.toLowerCase().includes(word)
+          word.length > 3 && doubt.toLowerCase().includes(word)
         )
       );
-
       if (needsReview) {
         return { name: concept, level: 'needs_review' };
       }

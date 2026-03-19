@@ -8,35 +8,23 @@ STYLE: Speak in Hinglish (Hindi + English mix). Hindi for encouragement/transiti
 RULES: Relate to JEE/NEET patterns. Explain physical intuition, not just math. Give tricks to remember formulas. Never use markdown/bullets — speak naturally like a class lecture.`
 }
 
-// Detect if student input is vague / "I don't understand" type
 function isVagueOrConfused(question: string): boolean {
   const q = question.toLowerCase().trim()
-  const vaguePatterns = [
-    // Hindi
-    'haan', 'ha', 'haa', 'yeh', 'ye', 'yahi', 'nahi', 'nhi', 'nai',
-    'nahi samjha', 'nhi samjha', 'samajh nahi aaya', 'samjh nhi aaya',
-    'nahi aaya', 'clear nahi', 'confused', 'doubt', 'doubt hai',
-    'phir se', 'fir se', 'dobara', 'again', 'repeat',
-    'kya', 'kaise', 'kyun', 'kyu', 'why',
-    'aur', 'or', 'what', 'huh', 'ok but',
-    // English
-    "don't understand", 'dont understand', "didn't get", 'didnt get',
-    'not clear', 'explain again', 'say again', 'come again',
-    'i dont get it', "i don't get it", 'still confused',
-    'what do you mean', 'how', 'but why', 'but how',
-    'can you explain', 'explain this', 'tell me again',
-    'not getting', 'still not clear', 'huh?', '?',
-    'i dont understand', "i don't understand",
+  const patterns = [
+    'haan','ha','haa','yeh','ye','yahi','nahi','nhi','nai',
+    'nahi samjha','nhi samjha','samajh nahi aaya','samjh nhi aaya',
+    'nahi aaya','clear nahi','confused','doubt','doubt hai',
+    'phir se','fir se','dobara','again','repeat',
+    'kya','kaise','kyun','kyu','why','aur','or','what','huh','ok but',
+    "don't understand",'dont understand',"didn't get",'didnt get',
+    'not clear','explain again','say again','come again',
+    'i dont get it',"i don't get it",'still confused',
+    'what do you mean','how','but why','but how',
+    'can you explain','explain this','tell me again',
+    'not getting','still not clear','huh?','?',
   ]
-  // Check exact match or if the input is very short
-  if (q.length <= 15) {
-    for (const p of vaguePatterns) {
-      if (q === p || q.includes(p)) return true
-    }
-  }
-  // Very short input during lesson = likely confused
+  if (q.length <= 15) { for (const p of patterns) { if (q === p || q.includes(p)) return true } }
   if (q.length <= 5) return true
-  // Input is just punctuation or single word
   if (q.replace(/[^a-zA-Z0-9\u0900-\u097F]/g, '').length <= 4) return true
   return false
 }
@@ -47,6 +35,9 @@ export async function POST(request: NextRequest) {
       question, professorName, topicContext, previousSteps,
       repeatCount, previousAttempts,
       duringLesson, currentStepLabel, currentStepContent,
+      // Socratic dialogue state
+      socraticMode, pendingQuestion, targetConcept, socraticAttempts,
+      weakSpots,
     } = await request.json()
 
     const profName = professorName || 'Prof. Arjun Sharma'
@@ -70,69 +61,84 @@ export async function POST(request: NextRequest) {
         let temp: number
 
         if (duringLesson && currentStepContent) {
-          // ═══ MID-LESSON MODE ═══
+          // ═══ MID-LESSON SOCRATIC MODE ═══
           tokenLimit = 800
           temp = 0.5
 
-          const stepInfo = `
-CURRENT STEP: "${currentStepLabel}"
-STEP CONTENT:
-${currentStepContent}
+          const stepInfo = `CURRENT STEP: "${currentStepLabel}"\nSTEP CONTENT:\n${currentStepContent}\n\nSTEPS COVERED:\n${previousSteps || 'None'}`
+          const weakInfo = weakSpots?.length ? `\nSTUDENT'S KNOWN WEAK SPOTS: ${weakSpots.join(', ')}` : ''
 
-STEPS COVERED SO FAR:
-${previousSteps || 'None'}`
-
-          if (isVague) {
-            // Student said something vague like "haan", "nahi samjha", "yeh", "?"
-            // → DO NOT try to interpret the word. Just re-explain the step.
+          if (socraticMode === 'evaluate_answer') {
+            // Student is answering our previous leading question
             promptText = `${getSystemPrompt(profName)}
 
 TOPIC: ${topicContext}
-${stepInfo}
+${stepInfo}${weakInfo}
 
-THE STUDENT SAID: "${question}"
-This is NOT a specific question — the student is confused and needs you to RE-EXPLAIN the current step.
+YOU PREVIOUSLY ASKED THIS LEADING QUESTION: "${pendingQuestion}"
+THE CONCEPT BEING TESTED: "${targetConcept}"
+STUDENT'S ANSWER: "${question}"
+ATTEMPT NUMBER: ${socraticAttempts || 1}
 
-YOU MUST DO ALL OF THIS (this is mandatory, not optional):
+EVALUATE their answer and respond with EXACTLY ONE of these JSON formats (respond ONLY with JSON, nothing else):
 
-1. START with: "Achha koi baat nahi, main ek aur tarike se samjhata hoon..."
+If their answer shows understanding (even partially correct):
+{"verdict": "correct", "response": "Bilkul sahi! [brief praise + connect to next concept]. Ab samajh aaya? Continue press karo!", "concept": "${targetConcept}"}
 
-2. RE-EXPLAIN THE CONCEPT using a COMPLETELY DIFFERENT approach:
-   - If the step has a formula, explain WHAT each symbol means physically (e.g., "g matlab gravity ka pull, 10 m/s² matlab har second speed 10 badh jaati hai")
-   - Give a REAL-LIFE ANALOGY (e.g., for projectile: "Jaise agar tum terrace se ball throw karo...")
-   - Work through a SIMPLER numerical example with easy numbers like 2, 5, 10
+If their answer is wrong or they seem confused (attempt 1-2):
+{"verdict": "wrong", "response": "[Gently correct without giving full answer]. Hint: [give a specific hint]. Ek aur try karo!", "concept": "${targetConcept}", "hint": "[one-line hint]"}
 
-3. THEN show the same formula again but SLOWER, step by step:
-   - "Pehle ye likho: [formula]"
-   - "Ab isme ye value dalo: [substitution]"
-   - "Calculate karo: [result]"
+If they've failed 3+ times, give the full explanation:
+{"verdict": "give_up", "response": "[Full clear explanation with formula + example + analogy]. Ye concept important hai — ${targetConcept} ka matlab hai [explain]. Ab samajh aaya? Continue press karo ya aur poocho!", "concept": "${targetConcept}"}
 
-4. END with: "Ab samajh aaya? Agar haan toh Continue press karo. Nahi toh specifically batao kaunsa part confuse kar raha hai."
+IMPORTANT: Return ONLY valid JSON. No extra text before or after.`
 
-IMPORTANT: Your response MUST be 150-250 words. You MUST include actual formulas and numbers. Do NOT just say "accha doubt hai" — that is USELESS. Actually teach the concept.`
+          } else if (isVague) {
+            // Student said "haan" / "nahi samjha" / vague → re-explain with Socratic approach
+            promptText = `${getSystemPrompt(profName)}
+
+TOPIC: ${topicContext}
+${stepInfo}${weakInfo}
+
+Student is confused about this step (said: "${question}").
+
+${repeatCount >= 3 ? `They've been confused ${repeatCount} times. Previous failed explanations:\n${previousAttempts}\nUse COMPLETELY different approach.` : ''}
+
+Instead of just explaining again, use the SOCRATIC METHOD:
+
+Respond with this JSON format ONLY:
+{"mode": "socratic", "leadingQuestion": "[A specific sub-question that tests the prerequisite concept. E.g., if step is about acceleration in pulley, ask: 'Pehle ye batao — m1 pe kitne forces lag rahe hain? Unke names kya hain?']", "targetConcept": "[the specific concept being tested, e.g., 'Force Identification' or 'Free Body Diagram']", "intro": "[1-2 sentence intro before the question, e.g., 'Achha dekho, pehle basics check karte hain...']"}
+
+The leading question must:
+- Test a PREREQUISITE concept (not the final answer)
+- Be specific enough that the answer is 1-2 sentences
+- Be something a JEE student should know
+- Be in Hinglish
+
+IMPORTANT: Return ONLY valid JSON. No extra text.`
+
           } else {
-            // Student asked a SPECIFIC question
+            // Student asked a SPECIFIC question → also use Socratic approach first
             promptText = `${getSystemPrompt(profName)}
 
 TOPIC: ${topicContext}
-${stepInfo}
+${stepInfo}${weakInfo}
 
-${repeatCount >= 3 ? `⚠️ Student asked about this ${repeatCount} times. Previous failed explanations:\n${previousAttempts}\nUse COMPLETELY different approach — daily life analogy, cricket example, or imagine-you-are framing.` : ''}
-${repeatCount === 2 ? `Student asked similar before. Use different angle. Previous attempt:\n${previousAttempts}` : ''}
+STUDENT'S DOUBT: "${question}"
 
-STUDENT'S SPECIFIC DOUBT: "${question}"
+${repeatCount >= 3 ? `Student asked ${repeatCount} times. Previous:\n${previousAttempts}\nGive full explanation this time.` : ''}
 
-YOU MUST:
-1. Directly answer their specific question about this step
-2. If they ask "why" or "kaise" — explain the physical intuition, not just repeat the formula
-3. Give a concrete example with actual numbers
-4. If relevant, mention which JEE/NEET year this concept appeared
-5. End with: "Ab clear hai? Continue press karo ya aur poocho!"
+${repeatCount && repeatCount >= 3 ? `Since they have asked many times, give a DIRECT, CLEAR explanation with formula + example. Respond as plain text (NOT JSON).` :
+`Use the SOCRATIC METHOD. Instead of giving the answer directly, ask a leading question that guides them to figure it out.
 
-Response must be 100-200 words with actual teaching content.`
+Respond with this JSON format ONLY:
+{"mode": "socratic", "leadingQuestion": "[A question that makes them think about the prerequisite. E.g., if they ask 'How to find acceleration?', ask 'Pehle batao — dono blocks pe kaunse forces lag rahe hain aur kis direction mein?']", "targetConcept": "[specific concept being tested]", "intro": "[1 sentence like 'Achha, main seedha answer nahi dunga — pehle sochke batao...']"}
+
+IMPORTANT: Return ONLY valid JSON. No extra text.`}`
+
           }
         } else {
-          // ═══ CASUAL MODE (not during lesson) ═══
+          // ═══ CASUAL MODE ═══
           tokenLimit = 300
           temp = 0.7
           promptText = `${getSystemPrompt(profName)}
@@ -150,10 +156,19 @@ Give a concise, helpful answer in Hinglish (50-100 words). Relate to JEE/NEET if
           generationConfig: { maxOutputTokens: tokenLimit, temperature: temp },
         })
 
-        const text = result.response.text()
-        if (!text || text.trim().length < 20) throw new Error('Response too short')
+        const rawText = result.response.text().trim()
+        if (!rawText || rawText.length < 5) throw new Error('Response too short')
 
-        return NextResponse.json({ response: text, model: modelName, isVague })
+        // Try to parse as JSON (Socratic responses)
+        try {
+          // Clean up common JSON issues from LLMs
+          const jsonStr = rawText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim()
+          const parsed = JSON.parse(jsonStr)
+          return NextResponse.json({ ...parsed, model: modelName, raw: false })
+        } catch {
+          // Not JSON — return as plain text response
+          return NextResponse.json({ response: rawText, model: modelName, raw: true })
+        }
       } catch (modelError) {
         lastError = modelError instanceof Error ? modelError : new Error(String(modelError))
         console.error(`[Gemini] ${modelName} failed:`, lastError.message)
@@ -161,15 +176,10 @@ Give a concise, helpful answer in Hinglish (50-100 words). Relate to JEE/NEET if
       }
     }
 
-    return NextResponse.json({
-      error: lastError?.message || 'All models failed', fallback: true,
-      debug: `Tried: ${modelsToTry.join(', ')}`,
-    }, { status: 200 })
+    return NextResponse.json({ error: lastError?.message || 'All models failed', fallback: true }, { status: 200 })
   } catch (error: unknown) {
     console.error('[Gemini] Error:', error)
-    return NextResponse.json({
-      error: error instanceof Error ? error.message : 'Unknown error', fallback: true,
-    }, { status: 200 })
+    return NextResponse.json({ error: error instanceof Error ? error.message : 'Unknown error', fallback: true }, { status: 200 })
   }
 }
 
