@@ -125,30 +125,29 @@ export default function DoubtChat({
       const response = data.response as string || ''
 
       if (verdict === 'correct') {
-        // Student got it! Resolve weak spot
         setProfile(prev => resolveWeakSpot(clearSocraticState(prev, currentTopic), currentTopic, socratic.targetConcept))
         addMsg('teacher', response, 'correct')
         setMessages(prev => [...prev, { role: 'system', text: `✅ "${socratic.targetConcept}" — Samajh aa gaya!` }])
         onWeakSpotUpdate?.(getWeakConcepts(profile, currentTopic))
-        speakAndNotify(response)
       } else if (verdict === 'give_up' || (socratic.attempts >= 2)) {
-        // Gave up or 3+ wrong → give full explanation, mark as weak
         setProfile(prev => addWeakSpot(clearSocraticState(prev, currentTopic), currentTopic, currentStepLabel, socratic.targetConcept))
         addMsg('teacher', response, 'explanation')
         setMessages(prev => [...prev, { role: 'system', text: `🔴 "${socratic.targetConcept}" → Weak Spot marked` }])
         onWeakSpotUpdate?.(getWeakConcepts(profile, currentTopic))
-        speakAndNotify(response)
       } else {
-        // Wrong but still has attempts → give hint, ask again
         setProfile(prev => setSocraticState(prev, currentTopic, {
           ...socratic, attempts: socratic.attempts + 1, pendingQuestion: socratic.pendingQuestion
         }))
         setProfile(prev => addWeakSpot(prev, currentTopic, currentStepLabel, socratic.targetConcept))
         addMsg('teacher', response, 'wrong')
-        onTeacherSpeak(response)
       }
 
       doubtHistoryRef.current.push({ question, response })
+
+      // Single speech source: parent handles it via onDoubtDuringLesson
+      if (onDoubtDuringLesson) {
+        onDoubtDuringLesson(question, response)
+      }
       setIsThinking(false)
       return
     }
@@ -170,8 +169,10 @@ export default function DoubtChat({
         setIsThinking(false); return
       }
 
+      // Build the text that will be spoken and shown on whiteboard
+      let spokenText = ''
+
       if (data.mode === 'socratic' && data.leadingQuestion) {
-        // Gemini wants to ask a Socratic question
         const intro = (data.intro as string) || ''
         const lq = data.leadingQuestion as string
         const concept = (data.targetConcept as string) || 'Concept'
@@ -183,17 +184,19 @@ export default function DoubtChat({
         const fullMsg = `${intro}\n\n💡 ${lq}`
         addMsg('teacher', fullMsg, 'socratic_question')
         setMessages(prev => [...prev, { role: 'system', text: `🎯 Testing: "${concept}" — answer karo!` }])
-        speakAndNotify(`${intro} ... ${lq}`)
+        spokenText = `${intro} ... ${lq}`
       } else {
-        // Direct explanation (3+ repeats or Gemini decided to explain)
         const response = (data.response as string) || 'Let me explain this differently...'
         addMsg('teacher', response, 'explanation')
-        speakAndNotify(response)
+        spokenText = response
       }
 
-      doubtHistoryRef.current.push({ question, response: (data.response || data.leadingQuestion || '') as string })
-      if (duringLesson && onDoubtDuringLesson) {
-        onDoubtDuringLesson(question, (data.response || data.intro || '') as string)
+      doubtHistoryRef.current.push({ question, response: spokenText })
+
+      // SINGLE source of speech: onDoubtDuringLesson handles BOTH speaking AND whiteboard injection
+      // Do NOT also call speakAndNotify — that causes double voice
+      if (onDoubtDuringLesson) {
+        onDoubtDuringLesson(question, spokenText)
       }
       setIsThinking(false)
       return
@@ -215,13 +218,10 @@ export default function DoubtChat({
     setMessages(prev => [...prev, { role, text, type }])
   }
 
-  function speakAndNotify(text: string) {
-    // During active lesson: DON'T speak here — onDoubtDuringLesson in the parent handles speaking
-    // This prevents double voice (DoubtChat + parent both calling speak())
-    if (!isLessonActive) {
-      onTeacherSpeak(text)
-    }
-  }
+  // All speech is routed through parent:
+  // - During lesson: onDoubtDuringLesson (stops current audio first, then speaks)
+  // - Casual mode: onTeacherSpeak
+  // This ensures only ONE voice plays at a time.
 
   // Active Socratic question indicator
   const activeSocratic = profile.socraticState[currentTopic]
