@@ -5,10 +5,13 @@ import Avatar from '@/components/Avatar'
 import Whiteboard from '@/components/Whiteboard'
 import DoubtChat from '@/components/DoubtChat'
 import ConceptHeatmap from '@/components/ConceptHeatmap'
+import GuidedSolve from '@/components/GuidedSolve'
 import { topics as builtInTopics, type Topic, type Subject, type Difficulty } from '@/data/topics'
 import { initTTS, setCallbacks, speak, stopSpeaking, getTTSMode } from '@/lib/tts'
 import { professors, defaultProfessor } from '@/data/professors'
 import type { Step } from '@/data/types'
+
+type AppMode = 'lesson' | 'practice'
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 
@@ -24,11 +27,13 @@ const difficultyColors: Record<string, string> = {
 
 export default function Home() {
   const [selectedTopic, setSelectedTopic] = useState<Topic | null>(null)
+  const [appMode, setAppMode] = useState<AppMode>('lesson')
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentStep, setCurrentStep] = useState(-1)
   const [isSpeaking, setIsSpeaking] = useState(false)
   const [speed, setSpeed] = useState(1)
   const [studentCount, setStudentCount] = useState(847)
+  const [practiceWeakSkills, setPracticeWeakSkills] = useState<string[]>([])
   const [ttsMode, setTtsMode] = useState<string>('detecting')
   const [subject, setSubject] = useState<Subject>('All')
   const [difficulty, setDifficulty] = useState<Difficulty>('All')
@@ -301,61 +306,134 @@ export default function Home() {
         </aside>
 
         <main className="flex-1 flex flex-col min-w-0">
+          {/* Mode toggle + toolbar */}
           <div className="flex items-center justify-between px-5 py-2.5 bg-[var(--surface)] border-b border-[var(--border)] shrink-0">
-            <div className="font-bold text-base truncate">{selectedTopic ? selectedTopic.titleHi : 'Question select karo →'}</div>
+            <div className="flex items-center gap-3 min-w-0">
+              {/* Mode toggle */}
+              <div className="flex rounded-lg border border-[var(--border)] overflow-hidden shrink-0">
+                <button onClick={() => { if (isPlaying) stopLesson(); setAppMode('lesson') }}
+                  className={`px-3 py-1.5 text-[11px] font-semibold transition-colors ${appMode === 'lesson' ? 'bg-orange-500 text-white' : 'bg-transparent text-[var(--text-dim)] hover:text-white'}`}>
+                  📺 Lesson
+                </button>
+                <button onClick={() => { if (isPlaying) stopLesson(); setAppMode('practice'); setPracticeWeakSkills([]) }}
+                  className={`px-3 py-1.5 text-[11px] font-semibold transition-colors ${appMode === 'practice' ? 'bg-green-500 text-white' : 'bg-transparent text-[var(--text-dim)] hover:text-white'}`}>
+                  ✏️ Practice
+                </button>
+              </div>
+              <div className="font-bold text-sm truncate">{selectedTopic ? selectedTopic.titleHi : 'Question select karo →'}</div>
+            </div>
+
             <div className="flex items-center gap-2 shrink-0">
-              {isPaused && (
-                <button onClick={handleResume} className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold bg-green-500 text-white shadow-[0_2px_12px_rgba(0,230,118,0.3)] hover:bg-green-600 transition-colors animate-pulse">
-                  ✅ Samajh aa gaya! Continue →
-                </button>
+              {/* Lesson mode controls */}
+              {appMode === 'lesson' && (
+                <>
+                  {isPaused && (
+                    <button onClick={handleResume} className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold bg-green-500 text-white shadow-[0_2px_12px_rgba(0,230,118,0.3)] hover:bg-green-600 transition-colors animate-pulse">
+                      ✅ Samajh aa gaya! Continue →
+                    </button>
+                  )}
+                  {isPlaying && !isPaused && (
+                    <button onClick={stopLesson} className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold bg-red-500/15 text-red-400 border border-red-500/20 hover:bg-red-500/25 transition-colors">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1"/></svg> Stop
+                    </button>
+                  )}
+                  <button onClick={startLesson} disabled={!selectedTopic || isPlaying} className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold bg-orange-500 text-white shadow-[0_2px_12px_rgba(255,150,0,0.3)] hover:-translate-y-px transition-all disabled:opacity-40 disabled:cursor-not-allowed">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>
+                    {isPlaying ? (isPaused ? 'Paused' : 'Playing...') : 'Start Lesson'}
+                  </button>
+                </>
               )}
-              {isPlaying && !isPaused && (
-                <button onClick={stopLesson} className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold bg-red-500/15 text-red-400 border border-red-500/20 hover:bg-red-500/25 transition-colors">
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1"/></svg> Stop
-                </button>
-              )}
-              <button onClick={startLesson} disabled={!selectedTopic || isPlaying} className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold bg-orange-500 text-white shadow-[0_2px_12px_rgba(255,150,0,0.3)] hover:shadow-[0_4px_20px_rgba(255,150,0,0.3)] hover:-translate-y-px transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:translate-y-0">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>
-                {isPlaying ? (isPaused ? 'Paused' : 'Playing...') : 'Start Lesson'}
-              </button>
             </div>
           </div>
 
-          <div className="h-[3px] mx-5 mt-2 bg-[var(--surface2)] rounded-full overflow-hidden">
-            <div className="h-full rounded-full transition-all duration-500 bg-gradient-to-r from-orange-500 to-yellow-400" style={{ width: `${progress}%` }} />
-          </div>
-
-          {selectedTopic && currentStep >= 0 ? (
-            <Whiteboard steps={displaySteps} currentStepIndex={currentStep + extraSteps.length} isPlaying={isPlaying} diagram={selectedTopic.diagram} />
-          ) : (
-            <div className="flex-1 flex items-center justify-center">
-              <div className="text-center px-10 max-w-md">
-                <div className="w-20 h-20 mx-auto mb-5 rounded-2xl bg-gradient-to-br from-orange-500 to-yellow-400 flex items-center justify-center shadow-[0_8px_32px_rgba(255,150,0,0.3)]">
-                  {selectedTopic ? <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2"><polygon points="5,3 19,12 5,21"/></svg> : <span className="text-3xl">🎯</span>}
-                </div>
-                <h2 className="text-2xl font-bold mb-2">{selectedTopic ? selectedTopic.title : 'JEETribe AI'}</h2>
-                <p className="text-[var(--text-dim)] text-sm leading-relaxed">
-                  {selectedTopic ? `"Start Lesson" press karo — step-by-step solve karenge Hindi + English mein.` : `30 NTA-style questions — Physics, Chemistry, Maths. Select karo aur AI teacher se seekho!`}
-                </p>
-              </div>
+          {/* Progress bar (lesson mode only) */}
+          {appMode === 'lesson' && (
+            <div className="h-[3px] mx-5 mt-2 bg-[var(--surface2)] rounded-full overflow-hidden">
+              <div className="h-full rounded-full transition-all duration-500 bg-gradient-to-r from-orange-500 to-yellow-400" style={{ width: `${progress}%` }} />
             </div>
           )}
 
-          <DoubtChat
-            currentTopic={selectedTopic?.id || ''}
-            topicTitle={selectedTopic ? `${selectedTopic.title} — ${selectedTopic.titleHi}` : ''}
-            professorName={currentProfessor.name}
-            coveredSteps={selectedTopic && currentStep >= 0 ? selectedTopic.steps.slice(0, currentStep + 1).map(s => `${s.label}: ${s.text || ''} ${s.math || ''}`.trim()) : []}
-            isLessonActive={isPlaying}
-            lessonCompleted={lessonCompleted}
-            isPaused={isPaused}
-            currentStepLabel={selectedTopic && currentStep >= 0 ? selectedTopic.steps[currentStep]?.label : ''}
-            currentStepContent={selectedTopic && currentStep >= 0 ? (() => { const s = selectedTopic.steps[currentStep]; return `Label: ${s.label}\nText: ${s.text || 'N/A'}\nFormula 1: ${s.math || 'N/A'}\nFormula 2: ${s.math2 || 'N/A'}\nFormula 3: ${s.math3 || 'N/A'}\nNarration: ${s.speech || 'N/A'}` })() : ''}
-            onTeacherSpeak={handleDoubtSpeak}
-            onDoubtAsked={(q) => setDoubtHistory(prev => [...prev, q])}
-            onDoubtDuringLesson={handleDoubtDuringLesson}
-            onWeakSpotUpdate={setWeakSpots}
-          />
+          {/* ═══ LESSON MODE ═══ */}
+          {appMode === 'lesson' && (
+            <>
+              {selectedTopic && currentStep >= 0 ? (
+                <Whiteboard steps={displaySteps} currentStepIndex={currentStep + extraSteps.length} isPlaying={isPlaying} diagram={selectedTopic.diagram} />
+              ) : (
+                <div className="flex-1 flex items-center justify-center">
+                  <div className="text-center px-10 max-w-md">
+                    <div className="w-20 h-20 mx-auto mb-5 rounded-2xl bg-gradient-to-br from-orange-500 to-yellow-400 flex items-center justify-center shadow-[0_8px_32px_rgba(255,150,0,0.3)]">
+                      {selectedTopic ? <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2"><polygon points="5,3 19,12 5,21"/></svg> : <span className="text-3xl">🎯</span>}
+                    </div>
+                    <h2 className="text-2xl font-bold mb-2">{selectedTopic ? selectedTopic.title : 'JEETribe AI'}</h2>
+                    <p className="text-[var(--text-dim)] text-sm leading-relaxed">
+                      {selectedTopic ? `"Start Lesson" press karo — step-by-step solve karenge Hindi + English mein.` : `Select a question, then choose 📺 Lesson to watch or ✏️ Practice to solve step-by-step!`}
+                    </p>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+
+          {/* ═══ PRACTICE MODE (Guided Solve) ═══ */}
+          {appMode === 'practice' && (
+            <>
+              {selectedTopic ? (
+                <GuidedSolve
+                  key={selectedTopic.id}
+                  topic={selectedTopic}
+                  professorName={currentProfessor.name}
+                  speed={speed}
+                  onComplete={(results) => {
+                    const skillSet = new Set(results.filter(r => !r.correct && r.weakSkill).map(r => r.weakSkill!))
+                    const skills: string[] = []; skillSet.forEach(s => skills.push(s))
+                    setPracticeWeakSkills(skills)
+                  }}
+                  onWeakSkillFound={(skill) => setPracticeWeakSkills(prev => prev.includes(skill) ? prev : [...prev, skill])}
+                />
+              ) : (
+                <div className="flex-1 flex items-center justify-center">
+                  <div className="text-center px-10 max-w-md">
+                    <div className="w-20 h-20 mx-auto mb-5 rounded-2xl bg-gradient-to-br from-green-500 to-emerald-400 flex items-center justify-center shadow-[0_8px_32px_rgba(0,230,118,0.3)]">
+                      <span className="text-3xl">✏️</span>
+                    </div>
+                    <h2 className="text-2xl font-bold mb-2">Guided Practice Mode</h2>
+                    <p className="text-[var(--text-dim)] text-sm leading-relaxed">
+                      Select a question from the sidebar. You'll solve it step-by-step — Prof will check each step and identify exactly which sub-skill needs work.
+                    </p>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+
+          {/* DoubtChat in lesson mode, weak skills in practice mode */}
+          {appMode === 'lesson' ? (
+            <DoubtChat
+              currentTopic={selectedTopic?.id || ''}
+              topicTitle={selectedTopic ? `${selectedTopic.title} — ${selectedTopic.titleHi}` : ''}
+              professorName={currentProfessor.name}
+              coveredSteps={selectedTopic && currentStep >= 0 ? selectedTopic.steps.slice(0, currentStep + 1).map(s => `${s.label}: ${s.text || ''} ${s.math || ''}`.trim()) : []}
+              isLessonActive={isPlaying}
+              lessonCompleted={lessonCompleted}
+              isPaused={isPaused}
+              currentStepLabel={selectedTopic && currentStep >= 0 ? selectedTopic.steps[currentStep]?.label : ''}
+              currentStepContent={selectedTopic && currentStep >= 0 ? (() => { const s = selectedTopic.steps[currentStep]; return `Label: ${s.label}\nText: ${s.text || 'N/A'}\nFormula 1: ${s.math || 'N/A'}\nFormula 2: ${s.math2 || 'N/A'}\nFormula 3: ${s.math3 || 'N/A'}\nNarration: ${s.speech || 'N/A'}` })() : ''}
+              onTeacherSpeak={handleDoubtSpeak}
+              onDoubtAsked={(q) => setDoubtHistory(prev => [...prev, q])}
+              onDoubtDuringLesson={handleDoubtDuringLesson}
+              onWeakSpotUpdate={setWeakSpots}
+            />
+          ) : practiceWeakSkills.length > 0 ? (
+            <div className="border-t border-[var(--border)] bg-[var(--surface)] px-5 py-3">
+              <div className="text-[10px] font-bold text-red-400 uppercase tracking-wider mb-2">🔴 Weak Sub-Skills Found</div>
+              <div className="flex flex-wrap gap-1.5">
+                {practiceWeakSkills.map(s => (
+                  <span key={s} className="px-2.5 py-1 rounded-full bg-red-500/15 text-red-300 text-xs font-semibold">{s}</span>
+                ))}
+              </div>
+              <div className="text-[10px] text-[var(--text-dim)] mt-1.5">The problem isn't "Physics" — it's these specific skills. Practice these separately!</div>
+            </div>
+          ) : null}
         </main>
       </div>
     </div>
