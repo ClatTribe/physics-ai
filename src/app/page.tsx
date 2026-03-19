@@ -7,6 +7,7 @@ import DoubtChat from '@/components/DoubtChat'
 import ConceptHeatmap from '@/components/ConceptHeatmap'
 import { topics as builtInTopics, type Topic, type Subject, type Difficulty } from '@/data/topics'
 import { initTTS, setCallbacks, speak, stopSpeaking, getTTSMode } from '@/lib/tts'
+import { professors, defaultProfessor } from '@/data/professors'
 import type { Step } from '@/data/types'
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
@@ -71,6 +72,13 @@ export default function Home() {
   }, [])
 
   const allTopics = useMemo(() => [...builtInTopics, ...customTopics], [customTopics])
+
+  // Current professor based on selected topic's subject
+  const currentProfessor = useMemo(() => {
+    if (selectedTopic) return professors[selectedTopic.subject] || defaultProfessor
+    return defaultProfessor
+  }, [selectedTopic])
+
   const filteredTopics = useMemo(() => {
     return allTopics.filter(t => {
       if (subject !== 'All' && t.subject !== subject) return false
@@ -279,7 +287,7 @@ export default function Home() {
         {/* ─── Sidebar ─── */}
         <aside className="w-[310px] bg-[var(--surface)] border-r border-[var(--border)] flex flex-col shrink-0">
           <div className="p-4 border-b border-[var(--border)]">
-            <Avatar isSpeaking={isSpeaking} />
+            <Avatar isSpeaking={isSpeaking} professor={currentProfessor} />
           </div>
 
           {selectedTopic && (
@@ -413,6 +421,7 @@ export default function Home() {
           <DoubtChat
             currentTopic={selectedTopic?.id || ''}
             topicTitle={selectedTopic ? `${selectedTopic.title} — ${selectedTopic.titleHi}` : ''}
+            professorName={currentProfessor.name}
             coveredSteps={
               selectedTopic && currentStep >= 0
                 ? selectedTopic.steps.slice(0, currentStep + 1).map(s => `${s.label}: ${s.text || ''} ${s.math || ''} ${s.math2 || ''} ${s.math3 || ''}`.trim())

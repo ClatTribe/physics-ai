@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { GoogleGenerativeAI } from '@google/generative-ai'
 
-const SYSTEM_PROMPT = `You are Prof. Arjun Sharma, the AI teacher at JEETribe AI. Expert IIT Delhi professor teaching Physics, Chemistry, and Mathematics for JEE and NEET.
+function getSystemPrompt(name: string) {
+  return `You are ${name}, an AI teacher at JEETribe AI. Expert IIT professor teaching for JEE and NEET.
 
 STYLE: Speak in Hinglish (Hindi + English mix). Hindi for encouragement/transitions, English for technical terms. Warm, patient, encouraging.
 RULES: Relate to JEE/NEET patterns. Explain physical intuition, not just math. Give tricks to remember formulas. Never use markdown/bullets — speak naturally like a class lecture.`
+}
 
 // Detect if student input is vague / "I don't understand" type
 function isVagueOrConfused(question: string): boolean {
@@ -42,10 +44,12 @@ function isVagueOrConfused(question: string): boolean {
 export async function POST(request: NextRequest) {
   try {
     const {
-      question, topicContext, previousSteps,
+      question, professorName, topicContext, previousSteps,
       repeatCount, previousAttempts,
       duringLesson, currentStepLabel, currentStepContent,
     } = await request.json()
+
+    const profName = professorName || 'Prof. Arjun Sharma'
 
     const apiKey = process.env.GEMINI_API_KEY
     if (!apiKey || apiKey === 'your_gemini_api_key_here') {
@@ -81,7 +85,7 @@ ${previousSteps || 'None'}`
           if (isVague) {
             // Student said something vague like "haan", "nahi samjha", "yeh", "?"
             // → DO NOT try to interpret the word. Just re-explain the step.
-            promptText = `${SYSTEM_PROMPT}
+            promptText = `${getSystemPrompt(profName)}
 
 TOPIC: ${topicContext}
 ${stepInfo}
@@ -108,7 +112,7 @@ YOU MUST DO ALL OF THIS (this is mandatory, not optional):
 IMPORTANT: Your response MUST be 150-250 words. You MUST include actual formulas and numbers. Do NOT just say "accha doubt hai" — that is USELESS. Actually teach the concept.`
           } else {
             // Student asked a SPECIFIC question
-            promptText = `${SYSTEM_PROMPT}
+            promptText = `${getSystemPrompt(profName)}
 
 TOPIC: ${topicContext}
 ${stepInfo}
@@ -131,7 +135,7 @@ Response must be 100-200 words with actual teaching content.`
           // ═══ CASUAL MODE (not during lesson) ═══
           tokenLimit = 300
           temp = 0.7
-          promptText = `${SYSTEM_PROMPT}
+          promptText = `${getSystemPrompt(profName)}
 
 Topic: ${topicContext || 'General'}
 ${previousSteps ? `Context:\n${previousSteps}` : ''}

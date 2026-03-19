@@ -10,11 +10,12 @@ interface Message {
 interface DoubtChatProps {
   currentTopic: string
   topicTitle: string
+  professorName: string
   coveredSteps: string[]
   isLessonActive: boolean
   isPaused: boolean
   currentStepLabel: string
-  currentStepContent: string  // Full step content (text + math + narration)
+  currentStepContent: string
   onTeacherSpeak: (text: string) => void
   onDoubtAsked?: (question: string) => void
   onDoubtDuringLesson?: (question: string, aiResponse: string) => void
@@ -44,7 +45,7 @@ function similarity(a: string, b: string): number {
 }
 
 export default function DoubtChat({
-  currentTopic, topicTitle, coveredSteps,
+  currentTopic, topicTitle, professorName, coveredSteps,
   isLessonActive, isPaused, currentStepLabel, currentStepContent,
   onTeacherSpeak, onDoubtAsked, onDoubtDuringLesson,
 }: DoubtChatProps) {
@@ -81,6 +82,7 @@ export default function DoubtChat({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           question,
+          professorName,
           topicContext: topicTitle,
           previousSteps: coveredSteps.join('\n'),
           repeatCount: count,
@@ -167,7 +169,7 @@ export default function DoubtChat({
                   ${msg.role === 'student' ? 'bg-orange-500 text-white rounded-br-sm' : 'bg-[var(--surface2)] text-[var(--text)] rounded-bl-sm border border-[var(--border)]'}`}>
                   {msg.role === 'teacher' && (
                     <div className="flex items-center gap-1.5 mb-1">
-                      <div className="text-[10px] font-bold text-green-400">Prof. Sharma</div>
+                      <div className="text-[10px] font-bold text-green-400">{professorName}</div>
                       {geminiAvailable && <div className="text-[9px] px-1.5 py-0.5 rounded bg-[rgba(108,99,255,0.15)] text-[var(--accent)] font-semibold">AI</div>}
                     </div>
                   )}
@@ -179,7 +181,7 @@ export default function DoubtChat({
           {isThinking && (
             <div className="flex justify-start">
               <div className="bg-[var(--surface2)] rounded-xl px-3.5 py-2.5 text-sm border border-[var(--border)] rounded-bl-sm">
-                <div className="text-[10px] font-bold text-green-400 mb-1">Prof. Sharma</div>
+                <div className="text-[10px] font-bold text-green-400 mb-1">{professorName}</div>
                 <div className="flex items-center gap-1.5 py-1">
                   <div className="w-1.5 h-1.5 bg-[var(--text-dim)] rounded-full animate-bounce" style={{animationDelay:'0s'}} />
                   <div className="w-1.5 h-1.5 bg-[var(--text-dim)] rounded-full animate-bounce" style={{animationDelay:'0.15s'}} />

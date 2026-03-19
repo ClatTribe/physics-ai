@@ -60,7 +60,7 @@ function StepCard({ step, visible }: { step: Step; visible: boolean }) {
       >
         <div className="flex items-center gap-2 mb-3">
           <span className="text-lg">🧠</span>
-          <div className="text-sm font-bold text-orange-400">Prof. Sharma is re-explaining this step...</div>
+          <div className="text-sm font-bold text-orange-400">Teacher is re-explaining this step...</div>
         </div>
         <div className="text-sm text-[var(--chalk)] leading-relaxed whitespace-pre-line">{step.text}</div>
         <div className="mt-3 pt-3 border-t border-orange-500/20 text-xs text-orange-400/70">
