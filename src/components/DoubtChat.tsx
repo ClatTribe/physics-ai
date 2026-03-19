@@ -16,6 +16,7 @@ interface DoubtChatProps {
   professorName: string
   coveredSteps: string[]
   isLessonActive: boolean
+  lessonCompleted: boolean
   isPaused: boolean
   currentStepLabel: string
   currentStepContent: string
@@ -43,7 +44,7 @@ function similarity(a: string, b: string): number {
 
 export default function DoubtChat({
   currentTopic, topicTitle, professorName, coveredSteps,
-  isLessonActive, isPaused, currentStepLabel, currentStepContent,
+  isLessonActive, lessonCompleted, isPaused, currentStepLabel, currentStepContent,
   onTeacherSpeak, onDoubtAsked, onDoubtDuringLesson, onWeakSpotUpdate,
 }: DoubtChatProps) {
   const [messages, setMessages] = useState<Message[]>([])
@@ -94,7 +95,9 @@ export default function DoubtChat({
     onDoubtAsked?.(question)
 
     const { count, previousResponses } = detectRepeat(question)
-    const duringLesson = isLessonActive
+    // Treat both active lesson AND just-completed lesson as "during lesson"
+    // so "samajh nahi aya" after lesson ends still gets full re-explanation
+    const duringLesson = isLessonActive || (lessonCompleted && currentStepContent)
     const socratic = profile.socraticState[currentTopic]
 
     setMessages(prev => [...prev, { role: 'student', text: question }])
@@ -213,7 +216,11 @@ export default function DoubtChat({
   }
 
   function speakAndNotify(text: string) {
-    onTeacherSpeak(text)
+    // During active lesson: DON'T speak here — onDoubtDuringLesson in the parent handles speaking
+    // This prevents double voice (DoubtChat + parent both calling speak())
+    if (!isLessonActive) {
+      onTeacherSpeak(text)
+    }
   }
 
   // Active Socratic question indicator

@@ -37,6 +37,8 @@ export default function Home() {
 
   // ═══ LESSON PAUSE/DOUBT STATE ═══
   const [isPaused, setIsPaused] = useState(false)
+  // Track if lesson completed (so post-lesson doubts still get full re-explanations)
+  const [lessonCompleted, setLessonCompleted] = useState(false)
   // Extra steps injected by AI when re-explaining during a doubt
   const [extraSteps, setExtraSteps] = useState<Step[]>([])
   // All steps = original + injected extra steps
@@ -113,6 +115,7 @@ export default function Home() {
     abortRef.current = false
     setIsPlaying(true)
     setIsPaused(false)
+    setLessonCompleted(false)
     setCurrentStep(-1)
     setExtraSteps([])
     stepDoubtsRef.current = new Map()
@@ -154,7 +157,10 @@ export default function Home() {
       await sleep(400)
     }
 
-    if (!abortRef.current) setIsPlaying(false)
+    if (!abortRef.current) {
+      setIsPlaying(false)
+      setLessonCompleted(true)
+    }
   }, [selectedTopic, speed])
 
   // We need a ref for isPaused so the async loop can read it
@@ -177,12 +183,18 @@ export default function Home() {
 
   // ═══ DOUBT HANDLER — pauses lesson, gets AI re-explanation ═══
   const handleDoubtDuringLesson = useCallback(async (question: string, aiResponse: string) => {
-    if (!isPlaying || currentStep < 0) return
+    // Works both during active lesson AND after lesson completed
+    if (currentStep < 0) return
 
-    // 1. Pause the lesson
+    // 1. Stop ANY currently playing audio FIRST
     stopSpeaking()
-    setIsPaused(true)
-    isPausedRef.current = true
+    // Small delay to ensure audio is fully stopped
+    await sleep(100)
+
+    if (isPlaying) {
+      setIsPaused(true)
+      isPausedRef.current = true
+    }
 
     // Track this doubt for the current step
     const existing = stepDoubtsRef.current.get(currentStep) || []
@@ -197,8 +209,10 @@ export default function Home() {
     }
     setExtraSteps([extraStep])
 
-    // 3. Speak the re-explanation
-    await speak(aiResponse, speed)
+    // 3. Speak the re-explanation (this is the ONLY place that speaks for lesson doubts)
+    if (aiResponse && aiResponse.length > 10) {
+      await speak(aiResponse, speed)
+    }
   }, [isPlaying, currentStep, speed])
 
   // Student clicks "Got it! Continue" — resumes the lesson
@@ -287,18 +301,18 @@ export default function Home() {
       {/* ═══ Main Layout ═══ */}
       <div className="flex flex-1 overflow-hidden">
         {/* ─── Sidebar ─── */}
-        <aside className="w-[310px] bg-[var(--surface)] border-r border-[var(--border)] flex flex-col shrink-0">
-          <div className="p-4 border-b border-[var(--border)]">
+        <aside className="w-[310px] bg-[var(--surface)] border-r border-[var(--border)] flex flex-col shrink-0 overflow-hidden">
+          <div className="p-4 border-b border-[var(--border)] shrink-0">
             <Avatar isSpeaking={isSpeaking} professor={currentProfessor} />
           </div>
 
           {selectedTopic && (
-            <div className="px-3 pt-3 pb-1 border-b border-[var(--border)]">
+            <div className="px-3 pt-3 pb-1 border-b border-[var(--border)] shrink-0">
               <ConceptHeatmap topicId={selectedTopic.id} currentStep={currentStep} doubtHistory={doubtHistory} weakSpots={weakSpots} />
             </div>
           )}
 
-          <div className="px-3 pt-3 pb-1">
+          <div className="px-3 pt-3 pb-1 shrink-0">
             <div className="flex gap-1">
               {SUBJECTS.map(s => (
                 <button key={s} onClick={() => setSubject(s)}
@@ -311,7 +325,7 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="px-3 pb-2">
+          <div className="px-3 pb-2 shrink-0">
             <div className="flex gap-1">
               {DIFFICULTIES.map(d => (
                 <button key={d} onClick={() => setDifficulty(d)}
@@ -324,9 +338,9 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="px-4 pb-2 text-[11px] text-[var(--text-dim)]">{filteredTopics.length} questions</div>
+          <div className="px-4 pb-2 text-[11px] text-[var(--text-dim)] shrink-0">{filteredTopics.length} questions</div>
 
-          <div className="flex-1 overflow-y-auto px-3 pb-3">
+          <div className="flex-1 min-h-0 overflow-y-auto px-3 pb-3">
             {filteredTopics.map(topic => (
               <button key={topic.id} onClick={() => handleTopicSelect(topic)}
                 className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-[10px] text-left transition-all mb-1
@@ -430,6 +444,7 @@ export default function Home() {
                 : []
             }
             isLessonActive={isPlaying}
+            lessonCompleted={lessonCompleted}
             isPaused={isPaused}
             currentStepLabel={selectedTopic && currentStep >= 0 ? selectedTopic.steps[currentStep]?.label : ''}
             currentStepContent={
