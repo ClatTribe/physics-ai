@@ -2,30 +2,18 @@ import { NextRequest, NextResponse } from 'next/server'
 import { GoogleGenerativeAI } from '@google/generative-ai'
 
 function getSystemPrompt(name: string) {
-  return `You are ${name}, an AI teacher at JEETribe AI. Expert IIT professor teaching for JEE and NEET.
-
-STYLE: Speak in Hinglish (Hindi + English mix). Hindi for encouragement/transitions, English for technical terms. Warm, patient, encouraging.
-RULES: Relate to JEE/NEET patterns. Explain physical intuition, not just math. Give tricks to remember formulas. Never use markdown/bullets — speak naturally like a class lecture.`
+  return `You are ${name}, an AI teacher at JEETribe AI. Expert IIT professor for JEE and NEET.
+Speak in Hinglish (Hindi + English mix). Hindi for encouragement, English for technical terms. Warm and patient.
+Relate to JEE/NEET patterns. Explain physical intuition. Give memory tricks for formulas.
+Never use markdown, bullet points, or headers — speak naturally like a class lecture.
+Never output JSON or code blocks — only natural speech.`
 }
 
-function isVagueOrConfused(question: string): boolean {
-  const q = question.toLowerCase().trim()
-  const patterns = [
-    'haan','ha','haa','yeh','ye','yahi','nahi','nhi','nai',
-    'nahi samjha','nhi samjha','samajh nahi aaya','samjh nhi aaya',
-    'nahi aaya','clear nahi','confused','doubt','doubt hai',
-    'phir se','fir se','dobara','again','repeat',
-    'kya','kaise','kyun','kyu','why','aur','or','what','huh','ok but',
-    "don't understand",'dont understand',"didn't get",'didnt get',
-    'not clear','explain again','say again','come again',
-    'i dont get it',"i don't get it",'still confused',
-    'what do you mean','how','but why','but how',
-    'can you explain','explain this','tell me again',
-    'not getting','still not clear','huh?','?',
-  ]
-  if (q.length <= 15) { for (const p of patterns) { if (q === p || q.includes(p)) return true } }
-  if (q.length <= 5) return true
-  if (q.replace(/[^a-zA-Z0-9\u0900-\u097F]/g, '').length <= 4) return true
+function isVagueOrConfused(q: string): boolean {
+  const s = q.toLowerCase().trim()
+  const p = ['haan','ha','haa','yeh','ye','nahi','nhi','nai','nahi samjha','samajh nahi aaya','clear nahi','confused','doubt','phir se','fir se','again','repeat','kya','kaise','kyun','kyu','why','what','huh',"don't understand",'dont understand','not clear','explain again','still confused','how','but why',"i don't get it",'not getting','?']
+  if (s.length <= 15) { for (const x of p) { if (s === x || s.includes(x)) return true } }
+  if (s.length <= 5) return true
   return false
 }
 
@@ -35,120 +23,128 @@ export async function POST(request: NextRequest) {
       question, professorName, topicContext, previousSteps,
       repeatCount, previousAttempts,
       duringLesson, currentStepLabel, currentStepContent,
-      // Socratic dialogue state
       socraticMode, pendingQuestion, targetConcept, socraticAttempts,
       weakSpots,
     } = await request.json()
 
     const profName = professorName || 'Prof. Arjun Sharma'
-
     const apiKey = process.env.GEMINI_API_KEY
     if (!apiKey || apiKey === 'your_gemini_api_key_here') {
-      return NextResponse.json({ error: 'GEMINI_API_KEY not configured', fallback: true }, { status: 200 })
+      return NextResponse.json({ error: 'No API key', fallback: true }, { status: 200 })
     }
 
     const genAI = new GoogleGenerativeAI(apiKey)
     const modelsToTry = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro']
     let lastError: Error | null = null
-    const isVague = isVagueOrConfused(question)
+    const vague = isVagueOrConfused(question)
 
     for (const modelName of modelsToTry) {
       try {
         const model = genAI.getGenerativeModel({ model: modelName })
-
         let promptText: string
-        let tokenLimit: number
-        let temp: number
+        let tokenLimit = 400
+        let temp = 0.6
 
-        if (duringLesson && currentStepContent) {
-          // ═══ MID-LESSON SOCRATIC MODE ═══
-          tokenLimit = 800
+        const stepInfo = currentStepContent ? `\nCURRENT STEP: "${currentStepLabel}"\nCONTENT:\n${currentStepContent}` : ''
+        const stepsInfo = previousSteps ? `\nSTEPS COVERED:\n${previousSteps}` : ''
+        const weakInfo = weakSpots?.length ? `\nSTUDENT WEAK SPOTS: ${weakSpots.join(', ')}` : ''
+
+        if (socraticMode === 'evaluate_answer') {
+          // ═══ Evaluate student's answer to our previous question ═══
+          tokenLimit = 600
+          promptText = `${getSystemPrompt(profName)}
+
+TOPIC: ${topicContext}${stepInfo}${weakInfo}
+
+You previously asked this question: "${pendingQuestion}"
+Concept being tested: "${targetConcept}"
+Student answered: "${question}"
+This is attempt #${socraticAttempts || 1}
+
+EVALUATE their answer:
+
+If CORRECT (even partially): Start with "VERDICT:CORRECT" on the first line, then praise them and briefly connect to the main concept. End with "Continue press karo!"
+
+If WRONG and this is attempt 1 or 2: Start with "VERDICT:WRONG" on the first line, then gently correct, give a specific hint, and say "Ek aur try karo!"
+
+If WRONG and this is attempt 3+: Start with "VERDICT:GIVEUP" on the first line, then give the FULL clear explanation with formula, example, and analogy. End with "Continue press karo ya aur doubt poocho!"
+
+IMPORTANT: Start your response with exactly one of: VERDICT:CORRECT or VERDICT:WRONG or VERDICT:GIVEUP (on its own line). Then write your natural Hinglish explanation.`
+
+        } else if (duringLesson && (vague || question)) {
+          // ═══ Doubt during lesson ═══
+          tokenLimit = 1000
           temp = 0.5
 
-          const stepInfo = `CURRENT STEP: "${currentStepLabel}"\nSTEP CONTENT:\n${currentStepContent}\n\nSTEPS COVERED:\n${previousSteps || 'None'}`
-          const weakInfo = weakSpots?.length ? `\nSTUDENT'S KNOWN WEAK SPOTS: ${weakSpots.join(', ')}` : ''
+          const repeatContext = repeatCount >= 3
+            ? `\nStudent asked ${repeatCount} times. Previous FAILED explanations:\n${previousAttempts}\nUse COMPLETELY different approach.`
+            : repeatCount === 2
+            ? `\nAsked before. Use different angle. Previous:\n${previousAttempts}`
+            : ''
 
-          if (socraticMode === 'evaluate_answer') {
-            // Student is answering our previous leading question
+          if (vague) {
+            // "haan", "nahi samjha", "?" → re-explain the step
             promptText = `${getSystemPrompt(profName)}
 
-TOPIC: ${topicContext}
-${stepInfo}${weakInfo}
+TOPIC: ${topicContext}${stepInfo}${stepsInfo}${weakInfo}${repeatContext}
 
-YOU PREVIOUSLY ASKED THIS LEADING QUESTION: "${pendingQuestion}"
-THE CONCEPT BEING TESTED: "${targetConcept}"
-STUDENT'S ANSWER: "${question}"
-ATTEMPT NUMBER: ${socraticAttempts || 1}
+Student said "${question}" — they are confused and need the current step re-explained.
 
-EVALUATE their answer and respond with EXACTLY ONE of these JSON formats (respond ONLY with JSON, nothing else):
+YOU MUST DO ALL OF THIS:
 
-If their answer shows understanding (even partially correct):
-{"verdict": "correct", "response": "Bilkul sahi! [brief praise + connect to next concept]. Ab samajh aaya? Continue press karo!", "concept": "${targetConcept}"}
+Start with: "Achha koi baat nahi, ek aur tarike se samjhte hain..."
 
-If their answer is wrong or they seem confused (attempt 1-2):
-{"verdict": "wrong", "response": "[Gently correct without giving full answer]. Hint: [give a specific hint]. Ek aur try karo!", "concept": "${targetConcept}", "hint": "[one-line hint]"}
+1. EXPLAIN what this step is about in simple words (what are we trying to find and why)
+2. If there is a formula — explain WHAT each symbol means physically. For example: "g matlab gravity, 10 m/s² ka matlab har second mein speed 10 badhti hai"
+3. Give a REAL-LIFE ANALOGY. For example for projectile: "Jaise terrace se ball phenko..."
+4. Work through a SIMPLE numerical example with easy numbers like 2, 5, 10
+5. Show the formula step by step: "Pehle ye likho... Ab isme values dalo... Calculate karo..."
+6. End with: "Ab samajh aaya? Continue press karo ya specific doubt batao!"
 
-If they've failed 3+ times, give the full explanation:
-{"verdict": "give_up", "response": "[Full clear explanation with formula + example + analogy]. Ye concept important hai — ${targetConcept} ka matlab hai [explain]. Ab samajh aaya? Continue press karo ya aur poocho!", "concept": "${targetConcept}"}
-
-IMPORTANT: Return ONLY valid JSON. No extra text before or after.`
-
-          } else if (isVague) {
-            // Student said "haan" / "nahi samjha" / vague → re-explain with Socratic approach
-            promptText = `${getSystemPrompt(profName)}
-
-TOPIC: ${topicContext}
-${stepInfo}${weakInfo}
-
-Student is confused about this step (said: "${question}").
-
-${repeatCount >= 3 ? `They've been confused ${repeatCount} times. Previous failed explanations:\n${previousAttempts}\nUse COMPLETELY different approach.` : ''}
-
-Instead of just explaining again, use the SOCRATIC METHOD:
-
-Respond with this JSON format ONLY:
-{"mode": "socratic", "leadingQuestion": "[A specific sub-question that tests the prerequisite concept. E.g., if step is about acceleration in pulley, ask: 'Pehle ye batao — m1 pe kitne forces lag rahe hain? Unke names kya hain?']", "targetConcept": "[the specific concept being tested, e.g., 'Force Identification' or 'Free Body Diagram']", "intro": "[1-2 sentence intro before the question, e.g., 'Achha dekho, pehle basics check karte hain...']"}
-
-The leading question must:
-- Test a PREREQUISITE concept (not the final answer)
-- Be specific enough that the answer is 1-2 sentences
-- Be something a JEE student should know
-- Be in Hinglish
-
-IMPORTANT: Return ONLY valid JSON. No extra text.`
+Write at least 150 words. Actually TEACH the concept — do not just say "accha doubt hai".`
 
           } else {
-            // Student asked a SPECIFIC question → also use Socratic approach first
-            promptText = `${getSystemPrompt(profName)}
+            // Specific question → Socratic leading question
+            if (repeatCount && repeatCount >= 3) {
+              // Too many repeats → give direct answer
+              promptText = `${getSystemPrompt(profName)}
 
-TOPIC: ${topicContext}
-${stepInfo}${weakInfo}
+TOPIC: ${topicContext}${stepInfo}${stepsInfo}${weakInfo}${repeatContext}
 
-STUDENT'S DOUBT: "${question}"
+Student asks: "${question}"
 
-${repeatCount >= 3 ? `Student asked ${repeatCount} times. Previous:\n${previousAttempts}\nGive full explanation this time.` : ''}
+They have asked multiple times — give a DIRECT, CLEAR, DETAILED explanation. Use a different approach than before. Include formula, numerical example, and real-life analogy. At least 150 words.`
+            } else {
+              // Socratic: ask a leading question
+              promptText = `${getSystemPrompt(profName)}
 
-${repeatCount && repeatCount >= 3 ? `Since they have asked many times, give a DIRECT, CLEAR explanation with formula + example. Respond as plain text (NOT JSON).` :
-`Use the SOCRATIC METHOD. Instead of giving the answer directly, ask a leading question that guides them to figure it out.
+TOPIC: ${topicContext}${stepInfo}${stepsInfo}${weakInfo}
 
-Respond with this JSON format ONLY:
-{"mode": "socratic", "leadingQuestion": "[A question that makes them think about the prerequisite. E.g., if they ask 'How to find acceleration?', ask 'Pehle batao — dono blocks pe kaunse forces lag rahe hain aur kis direction mein?']", "targetConcept": "[specific concept being tested]", "intro": "[1 sentence like 'Achha, main seedha answer nahi dunga — pehle sochke batao...']"}
+Student asks: "${question}"
 
-IMPORTANT: Return ONLY valid JSON. No extra text.`}`
+Instead of giving the answer directly, guide them with a LEADING QUESTION.
 
+Start with "SOCRATIC:" on the first line, followed by the concept name in brackets like [Force Identification].
+Then write 1-2 sentences of intro, then ask a specific sub-question that tests a prerequisite concept.
+
+Example format:
+SOCRATIC:[Free Body Diagram]
+Achha, main seedha answer nahi dunga. Pehle sochke batao — m1 pe kitne forces lag rahe hain aur kis direction mein? Sab forces ke naam batao.
+
+The leading question must test a PREREQUISITE (not the final answer), be answerable in 1-2 sentences, and be in Hinglish.`
+            }
           }
         } else {
-          // ═══ CASUAL MODE ═══
+          // ═══ Casual mode ═══
           tokenLimit = 300
           temp = 0.7
           promptText = `${getSystemPrompt(profName)}
 
-Topic: ${topicContext || 'General'}
-${previousSteps ? `Context:\n${previousSteps}` : ''}
+Topic: ${topicContext || 'General'}${stepsInfo}
 
 Student asks: "${question}"
 
-Give a concise, helpful answer in Hinglish (50-100 words). Relate to JEE/NEET if relevant.`
+Give a concise helpful answer in Hinglish (50-100 words).`
         }
 
         const result = await model.generateContent({
@@ -157,34 +153,60 @@ Give a concise, helpful answer in Hinglish (50-100 words). Relate to JEE/NEET if
         })
 
         const rawText = result.response.text().trim()
-        if (!rawText || rawText.length < 5) throw new Error('Response too short')
+        if (!rawText || rawText.length < 10) throw new Error('Response too short')
 
-        // Try to parse as JSON (Socratic responses)
-        try {
-          // Clean up common JSON issues from LLMs
-          const jsonStr = rawText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim()
-          const parsed = JSON.parse(jsonStr)
-          return NextResponse.json({ ...parsed, model: modelName, raw: false })
-        } catch {
-          // Not JSON — return as plain text response
-          return NextResponse.json({ response: rawText, model: modelName, raw: true })
+        // Parse structured responses
+        if (rawText.startsWith('VERDICT:')) {
+          const firstNewline = rawText.indexOf('\n')
+          const verdictLine = rawText.substring(0, firstNewline > 0 ? firstNewline : rawText.length).trim()
+          const responseText = firstNewline > 0 ? rawText.substring(firstNewline + 1).trim() : ''
+
+          let verdict = 'give_up'
+          if (verdictLine.includes('CORRECT')) verdict = 'correct'
+          else if (verdictLine.includes('WRONG')) verdict = 'wrong'
+
+          return NextResponse.json({ verdict, response: responseText, concept: targetConcept, model: modelName })
         }
+
+        if (rawText.startsWith('SOCRATIC:')) {
+          const firstNewline = rawText.indexOf('\n')
+          const conceptLine = rawText.substring(9, firstNewline > 0 ? firstNewline : rawText.length).trim()
+          const concept = conceptLine.replace(/[\[\]]/g, '').trim() || 'Concept'
+          const body = firstNewline > 0 ? rawText.substring(firstNewline + 1).trim() : rawText.substring(9).trim()
+
+          // Split into intro and question (last sentence ending with ?)
+          const lastQ = body.lastIndexOf('?')
+          let intro = body
+          let leadingQuestion = body
+          if (lastQ > 20) {
+            // Find the start of the question sentence
+            const beforeQ = body.substring(0, lastQ)
+            const sentStart = Math.max(beforeQ.lastIndexOf('.'), beforeQ.lastIndexOf('!'), beforeQ.lastIndexOf('।')) + 1
+            intro = body.substring(0, sentStart).trim()
+            leadingQuestion = body.substring(sentStart).trim()
+          }
+
+          return NextResponse.json({ mode: 'socratic', intro, leadingQuestion, targetConcept: concept, model: modelName })
+        }
+
+        // Plain text response
+        return NextResponse.json({ response: rawText, model: modelName })
+
       } catch (modelError) {
         lastError = modelError instanceof Error ? modelError : new Error(String(modelError))
-        console.error(`[Gemini] ${modelName} failed:`, lastError.message)
+        console.error(`[Gemini] ${modelName}:`, lastError.message)
         continue
       }
     }
 
-    return NextResponse.json({ error: lastError?.message || 'All models failed', fallback: true }, { status: 200 })
+    return NextResponse.json({ error: lastError?.message, fallback: true }, { status: 200 })
   } catch (error: unknown) {
-    console.error('[Gemini] Error:', error)
-    return NextResponse.json({ error: error instanceof Error ? error.message : 'Unknown error', fallback: true }, { status: 200 })
+    return NextResponse.json({ error: error instanceof Error ? error.message : 'Error', fallback: true }, { status: 200 })
   }
 }
 
 export async function GET() {
   const apiKey = process.env.GEMINI_API_KEY
-  const configured = !!(apiKey && apiKey !== 'your_gemini_api_key_here')
-  return NextResponse.json({ status: configured ? 'ready' : 'missing_key', keyPresent: configured })
+  const ok = !!(apiKey && apiKey !== 'your_gemini_api_key_here')
+  return NextResponse.json({ status: ok ? 'ready' : 'missing_key', keyPresent: ok })
 }
