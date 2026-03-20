@@ -10,7 +10,7 @@ export const professors: Record<string, Professor> = {
   Physics: {
     name: 'Prof. Arjun Sharma',
     title: 'Physics • IIT Delhi',
-    image: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=400&h=400&fit=crop&crop=face',
+    image: '/physics_avatar.jpeg',
     video: '/avatar-physics.mp4',
     color: '#6c63ff',
   },
